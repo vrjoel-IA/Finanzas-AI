@@ -1,5 +1,5 @@
 
-import React, { useState, useEffect, useMemo, createContext, useContext, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useLayoutEffect, useMemo, createContext, useContext, useRef, useCallback } from 'react';
 import { HashRouter, Routes, Route, Link, useLocation, useNavigate } from 'react-router-dom';
 import { 
   LayoutDashboard, Wallet, PiggyBank, Receipt, BarChart3, 
@@ -77,6 +77,8 @@ interface FinanceContextType extends FinanceState {
   setChallenges: (challenges: AIChallenge[]) => void;
   toggleTheme: () => void;
   updateChatHistory: (history: ChatMessage[]) => void;
+  importBudgetFromMonth: (sourceDate: string, targetDate: string) => void;
+  getEffectiveBudgets: (targetDate: string) => Budget[];
   
   // Wealth Projection Methods
   addExtraSaving: (e: Omit<ExtraSaving, 'id'>) => void;
@@ -101,6 +103,7 @@ export const useFinance = () => {
 };
 
 const App: React.FC = () => {
+  console.log("App component rendering");
   const [session, setSession] = useState<any>(null);
   const [isGuest, setIsGuest] = useState(false);
   const [state, setState] = useState<FinanceState>(INITIAL_DATA as any);
@@ -117,6 +120,7 @@ const App: React.FC = () => {
   const stateRef = useRef(state);
   // Ref para evitar concurrencia en fetchUserData
   const syncInProgressRef = useRef(false);
+  const initAppRunningRef = useRef(false);
   // Ref para throttle de visibilidad
   const lastSyncTimeRef = useRef(0);
 
@@ -266,6 +270,9 @@ const App: React.FC = () => {
   }, [setIsGuest, setState, setIsAppInitializing, setSyncError, setInitializationTimeout]);
 
   const initApp = useCallback(async () => {
+    if (initAppRunningRef.current) return;
+    initAppRunningRef.current = true;
+    console.log("initApp called");
     setIsAppInitializing(true); 
     setSyncError(false); 
     setInitializationTimeout(false); 
@@ -275,8 +282,10 @@ const App: React.FC = () => {
         setIsAppInitializing(false);
     }, 5000); 
 
+    console.log("initApp: llamando a supabase.auth.getSession()");
     try {
-      const { data: { session: currentSession }, error: sessionError } = await supabase.auth.getSession();
+      const { data: { session: currentSession }, error: sessionError } = await withTimeout(supabase.auth.getSession(), 5000);
+      console.log("initApp: supabase.auth.getSession() completado", { currentSession, sessionError });
       if (sessionError) throw sessionError;
       if (currentSession) {
         setSession(currentSession);
@@ -306,7 +315,9 @@ const App: React.FC = () => {
       }
     } finally {
       window.clearTimeout(timeoutId); 
+      console.log("initApp: llamando a setIsAppInitializing(false)");
       setIsAppInitializing(false); 
+      initAppRunningRef.current = false;
     }
   }, [fetchUserData, setSession, setIsGuest, setState, setIsAppInitializing, setSyncError, setInitializationTimeout, setDataLoadedFromCloud]);
 
@@ -345,7 +356,8 @@ const App: React.FC = () => {
 
   const retrySync = useCallback(async () => await saveData(), [saveData]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
+    console.log("App: useLayoutEffect mount, calling initApp");
     initApp();
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, newSession) => {
       if (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED') {
@@ -462,6 +474,43 @@ const App: React.FC = () => {
     saveData,
     forceResync,
     
+    importBudgetFromMonth: (sourceDate, targetDate) => setState(prev => {
+      const sourceBudgets = prev.budgets.filter(b => b.period === sourceDate);
+      const newBudgets = sourceBudgets.map(b => ({
+        ...b,
+        id: 'budget_' + Date.now() + Math.random(),
+        period: targetDate,
+        spent: 0 
+      }));
+      const filteredBudgets = prev.budgets.filter(b => b.period !== targetDate);
+      return { ...prev, budgets: [...filteredBudgets, ...newBudgets] };
+    }),
+    getEffectiveBudgets: (targetDate) => {
+      const allCategories = Array.from(new Set(state.budgets.map(b => b.category)));
+      return allCategories.map(cat => {
+        const exact = state.budgets.find(b => b.category === cat && b.period === targetDate);
+        if (exact) return exact;
+        if (targetDate.includes('-')) {
+          const [y, m] = targetDate.split('-').map(Number);
+          const lastYearPeriod = `${y - 1}-${String(m).padStart(2, '0')}`;
+          const lastYearMatch = state.budgets.find(b => b.category === cat && b.period === lastYearPeriod);
+          if (lastYearMatch) return { ...lastYearMatch, id: `inherited_${lastYearMatch.id}`, period: targetDate };
+        }
+        const previous = state.budgets
+          .filter(b => b.category === cat && (!b.period || b.period < targetDate))
+          .sort((a, b) => {
+            if (!a.period) return 1;
+            if (!b.period) return -1;
+            return b.period.localeCompare(a.period);
+          });
+        if (previous.length > 0) {
+          const best = previous[0];
+          return { ...best, id: `inherited_${best.id}`, period: targetDate };
+        }
+        return null;
+      }).filter((b): b is Budget => b !== null);
+    },
+
     addTransaction: (t, myPart) => {
       const id = 'tx_' + Math.random().toString(36).substr(2, 9);
       const finalTx = { ...t, id } as Transaction;
@@ -526,8 +575,20 @@ const App: React.FC = () => {
       const merged: Refund = { id: 'ref_' + Date.now(), name: `${r1.name} + ${r2.name}`, totalAmount: r1.totalAmount + r2.totalAmount, paidByMe: r1.paidByMe + r2.paidByMe, pendingAmount: r1.pendingAmount + r2.pendingAmount, status: (r1.status === 'open' || r2.status === 'open') ? 'open' : 'closed', notes: `Fusionado: ${r1.notes} | ${r2.notes}`, date: new Date().toISOString(), category: r1.category };
       setState(prev => ({ ...prev, refunds: [...prev.refunds.filter(r => r.id !== id1 && r.id !== id2), merged] }));
     },
-    addBudget: (b) => setState(prev => ({ ...prev, budgets: [...prev.budgets, { ...b, id: 'budget_' + Date.now(), spent: 0 } as Budget] })),
-    updateBudget: (b) => setState(prev => ({ ...prev, budgets: prev.budgets.map(bg => bg.id === b.id ? b : bg) })),
+    addBudget: (b) => setState(prev => {
+      const period = b.period || prev.currentDate;
+      const existingIndex = prev.budgets.findIndex(bg => bg.category === b.category && bg.period === period);
+      if (existingIndex >= 0) {
+        const newBudgets = [...prev.budgets];
+        newBudgets[existingIndex] = { ...newBudgets[existingIndex], ...b, period };
+        return { ...prev, budgets: newBudgets };
+      }
+      return { ...prev, budgets: [...prev.budgets, { ...b, id: 'budget_' + Date.now(), spent: 0, period } as Budget] };
+    }),
+    updateBudget: (b) => setState(prev => ({ 
+      ...prev, 
+      budgets: prev.budgets.map(bg => bg.id === b.id ? { ...b, period: b.period || prev.currentDate } : bg) 
+    })),
     deleteBudget: (id) => setState(prev => ({ ...prev, budgets: prev.budgets.filter(b => b.id !== id) })),
     addExtraSaving: (e) => setState(prev => ({ ...prev, extraSavings: [...(prev.extraSavings || []), { ...e, id: 'extra_' + Date.now() } as ExtraSaving] })),
     deleteExtraSaving: (id) => setState(prev => ({ ...prev, extraSavings: (prev.extraSavings || []).filter(e => e.id !== id) })),

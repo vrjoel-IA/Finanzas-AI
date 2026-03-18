@@ -58,6 +58,7 @@ export interface Budget {
   spent: number;
   type: 'income' | 'expense';
   color: string; // Color personalizado para la categoría
+  period?: string; // YYYY-MM
 }
 
 export interface AIChallenge {
