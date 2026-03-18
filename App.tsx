@@ -333,9 +333,13 @@ const App: React.FC = () => {
         supabase.from('profiles').upsert({ id: session.user.id, state, updated_at: now.toISOString() }),
         10000 
       );
-      if (error) throw error;
+      if (error) {
+        console.error("Supabase Save Error:", error);
+        throw error;
+      }
       safeSetItem(getDirtyKey(session.user.id), 'false');
     } catch (err) {
+      console.error("saveData general error:", err);
       setSyncError(true);
     } finally {
       setIsSyncing(false); 
@@ -348,6 +352,7 @@ const App: React.FC = () => {
     try {
         await fetchUserData(session.user.id);
     } catch(e) {
+        console.error("forceResync error:", e);
         setSyncError(true);
     } finally {
         setIsSyncing(false);
