@@ -16,7 +16,9 @@ export interface ScannedTransaction {
 
 // Analiza una captura de pantalla o ticket extrayendo múltiples líneas y categorizando inteligentemente.
 export const analyzeReceipt = async (base64Image: string): Promise<ScannedTransaction[]> => {
-  const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+  const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
+  if (!apiKey) throw new Error("Gemini API key is missing");
+  const ai = new GoogleGenAI({ apiKey });
   const response = await ai.models.generateContent({
     model: 'gemini-3-flash-preview',
     contents: {
@@ -71,7 +73,9 @@ export const analyzeReceipt = async (base64Image: string): Promise<ScannedTransa
  * Genera retos financieros personalizados basados en el contexto presupuestario y patrimonial del usuario.
  */
 export const generateAIChallenges = async (context: string): Promise<AIChallenge[]> => {
-  const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+  const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
+  if (!apiKey) throw new Error("Gemini API key is missing");
+  const ai = new GoogleGenAI({ apiKey });
   const response = await ai.models.generateContent({
     model: 'gemini-3-pro-preview',
     contents: `Actúa como Aura, asesora financiera experta. Basándote en el siguiente contexto financiero del usuario, genera 3 retos (AIChallenge) realistas y motivadores: ${context}`,
@@ -149,7 +153,9 @@ export const getFinancialAdviceWithTools = async (
   context: string,
   userMessage: string
 ): Promise<GenerateContentResponse> => {
-  const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+  const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
+  if (!apiKey) throw new Error("Gemini API key is missing");
+  const ai = new GoogleGenAI({ apiKey });
   return await ai.models.generateContent({
     model: 'gemini-3-pro-preview',
     contents: `CONTEXTO FINANCIERO HISTÓRICO Y ACTUAL:\n${context}\n\nMENSAJE DEL USUARIO: ${userMessage}`,
