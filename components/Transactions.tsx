@@ -25,13 +25,14 @@ import {
   ArrowDownCircle,
   ArrowUpCircle,
   Filter,
-  SlidersHorizontal
+  SlidersHorizontal,
+  Undo2
 } from 'lucide-react';
 import { Transaction } from '../types';
 import { analyzeReceipt, ScannedTransaction } from '../services/geminiService';
 
 const Transactions: React.FC = () => {
-  const { transactions, accounts, savings, refunds, budgets, addTransaction, updateTransaction, deleteTransaction, theme, currentDate, viewMode } = useFinance();
+  const { transactions, accounts, savings, refunds, budgets, addTransaction, updateTransaction, deleteTransaction, theme, currentDate, viewMode, startUndoBatch, commitUndoBatch, cancelUndoBatch, undoLastAdd, undoCount } = useFinance();
   const [filter, setFilter] = useState<'all' | 'income' | 'expense' | 'savings' | 'refunds'>('all');
   const [filterCategory, setFilterCategory] = useState<string>('all');
   const [filterAccount, setFilterAccount] = useState<string>('all');
@@ -40,9 +41,12 @@ const Transactions: React.FC = () => {
   const [editingTx, setEditingTx] = useState<Transaction | null>(null);
   const [viewingTx, setViewingTx] = useState<Transaction | null>(null);
   const [confirmDeleteInModal, setConfirmDeleteInModal] = useState(false);
+  const [undoToast, setUndoToast] = useState<string | null>(null);
+  const [confirmUndo, setConfirmUndo] = useState(false);
   
   // Aura Vision States
   const [isScanning, setIsScanning] = useState(false);
+  const isInScanBatch = useRef(false);
   const [scannedQueue, setScannedQueue] = useState<ScannedTransaction[]>([]);
   const [totalScannedCount, setTotalScannedCount] = useState(0);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -177,6 +181,9 @@ const Transactions: React.FC = () => {
         setScannedQueue(reversedItems);
         setTotalScannedCount(reversedItems.length);
         if (reversedItems.length > 0) {
+          // Iniciar batch de undo para toda la sesión de escaneo
+          startUndoBatch();
+          isInScanBatch.current = true;
           loadScannedItem(reversedItems[0]);
           setIsAdding(true);
         }
@@ -246,6 +253,11 @@ const Transactions: React.FC = () => {
     if (nextQueue.length > 0) {
       loadScannedItem(nextQueue[0]);
     } else {
+      // Si se descartó el último, commit del batch (puede estar vacío)
+      if (isInScanBatch.current) {
+        commitUndoBatch('Aura Vision');
+        isInScanBatch.current = false;
+      }
       setIsAdding(false);
       resetForm();
     }
@@ -256,6 +268,8 @@ const Transactions: React.FC = () => {
     if (amount === '') return;
 
     if (isTransfer) {
+      // Agrupar las 2 transacciones del traspaso en un solo undo
+      startUndoBatch();
       addTransaction({
         date,
         amount: Number(amount),
@@ -274,6 +288,7 @@ const Transactions: React.FC = () => {
         accountId: transferTargetId,
         isRefund: false
       });
+      commitUndoBatch(`Traspaso: ${Number(amount).toLocaleString('es-ES', { minimumFractionDigits: 2 })}€`);
     } else {
       const finalType = type === 'saving' 
         ? (savingDirection === 'deposit' ? 'expense' : 'income') 
@@ -313,6 +328,11 @@ const Transactions: React.FC = () => {
     if (nextQueue.length > 0) {
       loadScannedItem(nextQueue[0]);
     } else {
+      // Si estábamos en batch de Aura Vision, commit
+      if (isInScanBatch.current) {
+        commitUndoBatch('Aura Vision');
+        isInScanBatch.current = false;
+      }
       setIsAdding(false);
       resetForm();
     }
@@ -405,6 +425,40 @@ const Transactions: React.FC = () => {
           <p className="text-slate-700 dark:text-slate-400 font-bold text-sm">Historial de {viewMode === 'year' ? `todo el año ${currentDate}` : currentDate}.</p>
         </div>
         <div className="flex gap-2">
+          {undoCount > 0 && (
+            confirmUndo ? (
+              <div className="flex items-center gap-1">
+                <button 
+                  onClick={() => {
+                    const result = undoLastAdd();
+                    setConfirmUndo(false);
+                    if (result) {
+                      const count = result.ids.length;
+                      setUndoToast(`Deshecho: ${result.label} (${count} mov.)`);
+                      setTimeout(() => setUndoToast(null), 3000);
+                    }
+                  }}
+                  className="flex items-center gap-2 px-5 py-4 bg-rose-600 text-white font-black rounded-2xl transition-all shadow-lg active:scale-95 animate-in zoom-in duration-200"
+                >
+                  Confirmar
+                </button>
+                <button 
+                  onClick={() => setConfirmUndo(false)}
+                  className="p-4 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-500 rounded-2xl hover:bg-slate-50 dark:hover:bg-slate-700 transition-all"
+                >
+                  <X size={20} />
+                </button>
+              </div>
+            ) : (
+              <button 
+                onClick={() => setConfirmUndo(true)}
+                className="flex items-center gap-2 px-5 py-4 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 font-black rounded-2xl hover:bg-slate-50 dark:hover:bg-slate-700 transition-all shadow-sm active:scale-95"
+              >
+                <Undo2 size={20} className="text-amber-500" />
+                <span>Deshacer</span>
+              </button>
+            )
+          )}
           <button 
             onClick={() => fileInputRef.current?.click()}
             disabled={isScanning}
@@ -627,7 +681,13 @@ const Transactions: React.FC = () => {
                       </div>
                     )}
                   </div>
-                  <button onClick={() => { setIsAdding(false); resetForm(); setScannedQueue([]); }} className="p-4 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-full text-slate-400"><X size={28} /></button>
+                  <button onClick={() => { 
+                    if (isInScanBatch.current) {
+                      commitUndoBatch('Aura Vision');
+                      isInScanBatch.current = false;
+                    }
+                    setIsAdding(false); resetForm(); setScannedQueue([]); 
+                  }} className="p-4 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-full text-slate-400"><X size={28} /></button>
                 </div>
                 
                 <form onSubmit={handleManualSubmit} className="space-y-8">
@@ -775,7 +835,13 @@ const Transactions: React.FC = () => {
                     <div className="flex gap-3">
                       <button 
                         type="button" 
-                        onClick={() => { setIsAdding(false); resetForm(); setScannedQueue([]); }} 
+                        onClick={() => { 
+                          if (isInScanBatch.current) {
+                            commitUndoBatch('Aura Vision');
+                            isInScanBatch.current = false;
+                          }
+                          setIsAdding(false); resetForm(); setScannedQueue([]); 
+                        }} 
                         className="flex-1 py-5 bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-400 font-black rounded-2xl transition-colors"
                       >
                         CANCELAR
@@ -802,6 +868,14 @@ const Transactions: React.FC = () => {
                 </form>
              </div>
          </div>
+      )}
+      {undoToast && (
+        <div className="fixed bottom-24 left-1/2 -translate-x-1/2 z-[90] animate-in slide-in-from-bottom-4 fade-in duration-300">
+          <div className="flex items-center gap-3 bg-slate-900 dark:bg-slate-700 text-white px-6 py-4 rounded-2xl shadow-2xl border border-slate-700 dark:border-slate-600">
+            <Undo2 size={18} className="text-amber-400" />
+            <span className="text-sm font-bold">{undoToast}</span>
+          </div>
+        </div>
       )}
     </div>
   );

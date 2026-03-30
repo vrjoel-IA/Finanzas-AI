@@ -93,6 +93,13 @@ interface FinanceContextType extends FinanceState {
   manualRefresh: () => Promise<void>;
   saveData: () => Promise<void>;
   forceResync: () => Promise<void>;
+
+  // Undo system
+  startUndoBatch: () => void;
+  commitUndoBatch: (label: string) => void;
+  cancelUndoBatch: () => void;
+  undoLastAdd: () => {ids: string[], label: string} | null;
+  undoCount: number;
 }
 
 const FinanceContext = createContext<FinanceContextType | undefined>(undefined);
@@ -123,6 +130,12 @@ const App: React.FC = () => {
   const initAppRunningRef = useRef(false);
   // Ref para throttle de visibilidad
   const lastSyncTimeRef = useRef(0);
+
+  // Sistema de Undo
+  const undoStackRef = useRef<{ids: string[], label: string}[]>([]);
+  const currentBatchRef = useRef<string[]>([]);
+  const batchModeRef = useRef(false);
+  const [undoCount, setUndoCount] = useState(0);
 
   // CLAVES DE ALMACENAMIENTO LOCAL
   const getBackupKey = (userId: string) => `finanzas_pro_backup_${userId}`;
@@ -542,6 +555,16 @@ const App: React.FC = () => {
       const id = 'tx_' + Math.random().toString(36).substr(2, 9);
       const finalTx = { ...t, id } as Transaction;
       
+      // Undo tracking
+      if (batchModeRef.current) {
+        currentBatchRef.current.push(id);
+      } else {
+        undoStackRef.current.push({ ids: [id], label: t.description || 'Transacción' });
+        // Limitar el stack a 30 acciones
+        if (undoStackRef.current.length > 30) undoStackRef.current.shift();
+        setUndoCount(undoStackRef.current.length);
+      }
+
       setState(prev => {
         let updatedRefunds = [...prev.refunds];
         if (t.type === 'expense' && t.isRefund) {
@@ -631,8 +654,50 @@ const App: React.FC = () => {
     updateLayout: (newLayout) => setState(prev => ({ ...prev, dashboardLayout: newLayout })),
     setChallenges: (challenges) => setState(prev => ({ ...prev, challenges })),
     toggleTheme: () => setState(prev => ({ ...prev, theme: prev.theme === 'light' ? 'dark' : 'light' })),
-    updateChatHistory: (history) => setState(prev => ({ ...prev, chatHistory: history, chatLastDate: new Date().toISOString().split('T')[0] }))
-  }), [state, isGuest, isSyncing, syncError, getAccountHistoricalBalance, getSavingHistoricalBalance, getNetWorthHistorical, loginAsGuest, retrySync, manualRefresh, saveData, forceResync, syncRefundsWithTransactions]);
+    updateChatHistory: (history) => setState(prev => ({ ...prev, chatHistory: history, chatLastDate: new Date().toISOString().split('T')[0] })),
+
+    // Undo system
+    startUndoBatch: () => {
+      batchModeRef.current = true;
+      currentBatchRef.current = [];
+    },
+    commitUndoBatch: (label: string) => {
+      batchModeRef.current = false;
+      if (currentBatchRef.current.length > 0) {
+        undoStackRef.current.push({ ids: [...currentBatchRef.current], label });
+        if (undoStackRef.current.length > 30) undoStackRef.current.shift();
+        currentBatchRef.current = [];
+        setUndoCount(undoStackRef.current.length);
+      }
+    },
+    cancelUndoBatch: () => {
+      batchModeRef.current = false;
+      currentBatchRef.current = [];
+    },
+    undoLastAdd: () => {
+      const lastGroup = undoStackRef.current.pop();
+      setUndoCount(undoStackRef.current.length);
+      if (!lastGroup) return null;
+      
+      setState(prev => {
+        // Encontrar las transacciones a eliminar
+        const txsToRemove = prev.transactions.filter(t => lastGroup.ids.includes(t.id));
+        // Recopilar IDs de reembolsos asociados
+        const refundIdsToRemove = txsToRemove
+          .filter(t => t.type === 'expense' && t.isRefund && t.refundId)
+          .map(t => t.refundId!);
+        
+        let newTransactions = prev.transactions.filter(t => !lastGroup.ids.includes(t.id));
+        let newRefunds = prev.refunds.filter(r => !refundIdsToRemove.includes(r.id));
+        newRefunds = syncRefundsWithTransactions(newTransactions, newRefunds);
+        
+        return { ...prev, transactions: newTransactions, refunds: newRefunds };
+      });
+      
+      return lastGroup;
+    },
+    undoCount,
+  }), [state, isGuest, isSyncing, syncError, undoCount, getAccountHistoricalBalance, getSavingHistoricalBalance, getNetWorthHistorical, loginAsGuest, retrySync, manualRefresh, saveData, forceResync, syncRefundsWithTransactions]);
 
   if (isAppInitializing) { 
     return (
