@@ -159,13 +159,18 @@ const App: React.FC = () => {
   useEffect(() => {
     const handleBeforeUnload = () => {
       if (session?.user?.id && !isGuest && !ignoreNextUpdate.current) {
-        const now = new Date();
         try {
             const key = getBackupKey(session.user.id);
             const tsKey = getTimestampKey(session.user.id);
             const dirtyKey = getDirtyKey(session.user.id);
+            // Guardar el estado actual como backup
             localStorage.setItem(key, JSON.stringify(stateRef.current));
-            localStorage.setItem(tsKey, now.getTime().toString());
+            // IMPORTANTE: Mantener el timestamp existente para no inflar la fecha.
+            // Solo poner timestamp nuevo si no existe uno previo.
+            const existingTs = localStorage.getItem(tsKey);
+            if (!existingTs) {
+              localStorage.setItem(tsKey, Date.now().toString());
+            }
             localStorage.setItem(dirtyKey, 'true');
         } catch (e) {}
       }
@@ -212,8 +217,16 @@ const App: React.FC = () => {
       const cloudTime = data?.updated_at ? new Date(data.updated_at).getTime() : 0;
       const isDirty = safeGetItem(getDirtyKey(userId)) === 'true';
 
-      if (localState && (isDirty || localTime > cloudTime + 5000)) { 
-          await withTimeout<any>(
+      console.log(`[Sync] Local: ${localTime ? new Date(localTime).toISOString() : 'none'}, Cloud: ${cloudTime ? new Date(cloudTime).toISOString() : 'none'}, isDirty: ${isDirty}`);
+
+      // REGLA: Solo subir datos locales si el timestamp local es >= al de la nube.
+      // Esto evita machacar datos más nuevos del móvil/otro dispositivo.
+      const localIsNewerOrEqual = localTime >= cloudTime;
+      const localIsSignificantlyNewer = localTime > cloudTime + 5000;
+
+      if (localState && localIsNewerOrEqual && (isDirty || localIsSignificantlyNewer)) {
+        console.log('[Sync] → Subiendo datos locales a la nube (local más reciente)');
+        await withTimeout<any>(
             supabase.from('profiles').upsert({
                 id: userId,
                 state: localState,
@@ -223,16 +236,22 @@ const App: React.FC = () => {
           );
           safeSetItem(getDirtyKey(userId), 'false');
       } else if (data && data.state && cloudTime > localTime) {
-          const mergedState = { ...INITIAL_DATA, ...data.state };
+        console.log('[Sync] → Descargando datos de la nube (nube más reciente)');
+        const mergedState = { ...INITIAL_DATA, ...data.state };
           ignoreNextUpdate.current = true;
           setState(mergedState as FinanceState);
           safeSetItem(getBackupKey(userId), JSON.stringify(mergedState));
           safeSetItem(getTimestampKey(userId), cloudTime.toString());
           safeSetItem(getDirtyKey(userId), 'false');
           setTimeout(() => { ignoreNextUpdate.current = false; }, 500);
-      } 
+      } else {
+        console.log('[Sync] → Sin cambios (datos sincronizados)');
+        // Limpiar dirty flag si no hay nada que subir
+        if (isDirty) safeSetItem(getDirtyKey(userId), 'false');
+      }
       setDataLoadedFromCloud(true);
     } catch (err) {
+      console.error('[Sync] Error:', err);
       setSyncError(true); 
     } finally {
       setIsSyncing(false);
@@ -349,6 +368,9 @@ const App: React.FC = () => {
   const forceResync = useCallback(async () => {
     if (!session || isGuest) return;
     setIsSyncing(true);
+    // Limpiar flags locales para forzar descarga desde la nube
+    safeSetItem(getDirtyKey(session.user.id), 'false');
+    safeSetItem(getTimestampKey(session.user.id), '0');
     try {
         await fetchUserData(session.user.id);
     } catch(e) {
