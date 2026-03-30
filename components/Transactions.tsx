@@ -23,7 +23,9 @@ import {
   ArrowRight,
   Ban,
   ArrowDownCircle,
-  ArrowUpCircle
+  ArrowUpCircle,
+  Filter,
+  SlidersHorizontal
 } from 'lucide-react';
 import { Transaction } from '../types';
 import { analyzeReceipt, ScannedTransaction } from '../services/geminiService';
@@ -31,6 +33,8 @@ import { analyzeReceipt, ScannedTransaction } from '../services/geminiService';
 const Transactions: React.FC = () => {
   const { transactions, accounts, savings, refunds, budgets, addTransaction, updateTransaction, deleteTransaction, theme, currentDate, viewMode } = useFinance();
   const [filter, setFilter] = useState<'all' | 'income' | 'expense' | 'savings' | 'refunds'>('all');
+  const [filterCategory, setFilterCategory] = useState<string>('all');
+  const [filterAccount, setFilterAccount] = useState<string>('all');
   const [searchTerm, setSearchTerm] = useState('');
   const [isAdding, setIsAdding] = useState(false);
   const [editingTx, setEditingTx] = useState<Transaction | null>(null);
@@ -63,6 +67,16 @@ const Transactions: React.FC = () => {
 
   // Nuevo: Dirección del flujo de ahorro (Aportación vs Retirada)
   const [savingDirection, setSavingDirection] = useState<'deposit' | 'withdraw'>('deposit');
+
+  // Filter dropdown categories (from budgets)
+  const filterCategoriesList = useMemo(() => {
+    const cats = Array.from(new Set(budgets.map(b => b.category)));
+    // Also include categories used in current-period transactions not in budgets
+    transactions.filter(t => t.date.startsWith(currentDate)).forEach(t => {
+      if (t.category && !cats.includes(t.category)) cats.push(t.category);
+    });
+    return cats.sort();
+  }, [budgets, transactions, currentDate]);
 
   // Lógica de Categorías Disponibles Refinada
   const availableCategories = useMemo(() => {
@@ -319,13 +333,19 @@ const Transactions: React.FC = () => {
         else if (filter === 'savings') matchesType = isSaving;
         else if (filter === 'refunds') matchesType = isRefund;
 
+        // Category filter
+        const matchesCat = filterCategory === 'all' || t.category === filterCategory;
+
+        // Account filter
+        const matchesAcc = filterAccount === 'all' || t.accountId === filterAccount;
+
         const matchesSearch = t.description.toLowerCase().includes(searchTerm.toLowerCase()) || 
                               t.category.toLowerCase().includes(searchTerm.toLowerCase());
 
-        return matchesType && matchesSearch;
+        return matchesType && matchesCat && matchesAcc && matchesSearch;
       })
       .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
-  }, [transactions, filter, searchTerm, currentDate]);
+  }, [transactions, filter, filterCategory, filterAccount, searchTerm, currentDate]);
 
   const getTxStyle = (t: Transaction) => {
     const isSaving = t.category === 'Ahorro' || t.category === 'Ahorros' || !!t.savingId;
@@ -345,6 +365,25 @@ const Transactions: React.FC = () => {
   };
 
   const isCategoryDisabled = type === 'income' && isRefundLink && !!selectedRefundId;
+
+  // Helper: count of active filters
+  const activeFilterCount = (filterCategory !== 'all' ? 1 : 0) + (filterAccount !== 'all' ? 1 : 0) + (filter !== 'all' ? 1 : 0);
+
+  // Type filter label map
+  const typeFilterLabels: Record<string, string> = {
+    'all': 'Todos',
+    'income': 'Ingresos',
+    'expense': 'Gastos',
+    'savings': 'Ahorros',
+    'refunds': 'Reembolsos'
+  };
+  const typeFilterColors: Record<string, string> = {
+    'all': 'bg-slate-900 dark:bg-slate-600',
+    'income': 'bg-emerald-500 dark:bg-emerald-600',
+    'expense': 'bg-rose-500 dark:bg-rose-600',
+    'savings': 'bg-amber-500 dark:bg-amber-600',
+    'refunds': 'bg-blue-500 dark:bg-blue-600'
+  };
 
   return (
     <div className="space-y-8 animate-in fade-in duration-500 pb-20 max-w-6xl mx-auto px-4 transition-colors">
@@ -385,12 +424,81 @@ const Transactions: React.FC = () => {
 
       <div className="bg-white dark:bg-slate-900 rounded-[2.5rem] border border-slate-100 dark:border-slate-800 shadow-xl shadow-slate-200/50 dark:shadow-none overflow-hidden transition-all duration-300">
         <div className="p-4 md:p-6 border-b border-slate-100 dark:border-slate-800 flex flex-col gap-4 bg-slate-50/30 dark:bg-slate-800/20">
-          <div className="flex items-center gap-1 bg-white dark:bg-slate-800 p-1 rounded-2xl border border-slate-200 dark:border-slate-700 shadow-sm w-full overflow-x-auto no-scrollbar">
-            <button onClick={() => setFilter('all')} className={`whitespace-nowrap flex-1 px-4 py-3 text-[10px] font-black rounded-xl transition-all ${filter === 'all' ? 'bg-slate-900 dark:bg-slate-700 text-white shadow-lg' : 'text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200'}`}>TODOS</button>
-            <button onClick={() => setFilter('income')} className={`whitespace-nowrap flex-1 px-4 py-3 text-[10px] font-black rounded-xl transition-all ${filter === 'income' ? 'bg-emerald-500 dark:bg-emerald-600 text-white shadow-lg' : 'text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200'}`}>INGRESOS</button>
-            <button onClick={() => setFilter('expense')} className={`whitespace-nowrap flex-1 px-4 py-3 text-[10px] font-black rounded-xl transition-all ${filter === 'expense' ? 'bg-rose-500 dark:bg-rose-600 text-white shadow-lg' : 'text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200'}`}>GASTOS</button>
-            <button onClick={() => setFilter('savings')} className={`whitespace-nowrap flex-1 px-4 py-3 text-[10px] font-black rounded-xl transition-all ${filter === 'savings' ? 'bg-amber-500 dark:bg-amber-600 text-white shadow-lg' : 'text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200'}`}>AHORROS</button>
-            <button onClick={() => setFilter('refunds')} className={`whitespace-nowrap flex-1 px-4 py-3 text-[10px] font-black rounded-xl transition-all ${filter === 'refunds' ? 'bg-blue-500 dark:bg-blue-600 text-white shadow-lg' : 'text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200'}`}>REEMBOLSOS</button>
+          
+          {/* Filter Dropdowns Row */}
+          <div className="flex flex-col sm:flex-row gap-3">
+            {/* Type Filter Dropdown */}
+            <div className="relative flex-1 min-w-0">
+              <label className="block text-[9px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-[0.15em] mb-1.5 ml-1">Tipo</label>
+              <div className="relative">
+                <select 
+                  value={filter} 
+                  onChange={e => setFilter(e.target.value as any)}
+                  className="w-full appearance-none bg-white dark:bg-slate-800 border-2 border-slate-200 dark:border-slate-700 rounded-2xl px-4 py-3 pr-10 text-[11px] font-black text-slate-800 dark:text-white uppercase tracking-wider outline-none cursor-pointer transition-all focus:border-blue-400 dark:focus:border-blue-600 hover:border-slate-300 dark:hover:border-slate-600"
+                >
+                  <option value="all">Todos</option>
+                  <option value="income">Ingresos</option>
+                  <option value="expense">Gastos</option>
+                  <option value="savings">Ahorros</option>
+                  <option value="refunds">Reembolsos</option>
+                </select>
+                <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 dark:text-slate-500 pointer-events-none" size={14} />
+                {filter !== 'all' && (
+                  <div className={`absolute left-3 top-1/2 -translate-y-1/2 w-2 h-2 rounded-full ${typeFilterColors[filter]}`} />
+                )}
+              </div>
+            </div>
+
+            {/* Category Filter Dropdown */}
+            <div className="relative flex-1 min-w-0">
+              <label className="block text-[9px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-[0.15em] mb-1.5 ml-1">Categoría</label>
+              <div className="relative">
+                <select 
+                  value={filterCategory} 
+                  onChange={e => setFilterCategory(e.target.value)}
+                  className="w-full appearance-none bg-white dark:bg-slate-800 border-2 border-slate-200 dark:border-slate-700 rounded-2xl px-4 py-3 pr-10 text-[11px] font-black text-slate-800 dark:text-white uppercase tracking-wider outline-none cursor-pointer transition-all focus:border-blue-400 dark:focus:border-blue-600 hover:border-slate-300 dark:hover:border-slate-600"
+                >
+                  <option value="all">Todas</option>
+                  {filterCategoriesList.map(c => <option key={c} value={c}>{c}</option>)}
+                </select>
+                <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 dark:text-slate-500 pointer-events-none" size={14} />
+                {filterCategory !== 'all' && (
+                  <div className="absolute left-3 top-1/2 -translate-y-1/2 w-2 h-2 rounded-full bg-violet-500" />
+                )}
+              </div>
+            </div>
+
+            {/* Account Filter Dropdown */}
+            <div className="relative flex-1 min-w-0">
+              <label className="block text-[9px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-[0.15em] mb-1.5 ml-1">Cuenta</label>
+              <div className="relative">
+                <select 
+                  value={filterAccount} 
+                  onChange={e => setFilterAccount(e.target.value)}
+                  className="w-full appearance-none bg-white dark:bg-slate-800 border-2 border-slate-200 dark:border-slate-700 rounded-2xl px-4 py-3 pr-10 text-[11px] font-black text-slate-800 dark:text-white uppercase tracking-wider outline-none cursor-pointer transition-all focus:border-blue-400 dark:focus:border-blue-600 hover:border-slate-300 dark:hover:border-slate-600"
+                >
+                  <option value="all">Todas</option>
+                  {accounts.map(a => <option key={a.id} value={a.id}>{a.emoji || ''} {a.name}</option>)}
+                </select>
+                <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 dark:text-slate-500 pointer-events-none" size={14} />
+                {filterAccount !== 'all' && (
+                  <div className="absolute left-3 top-1/2 -translate-y-1/2 w-2 h-2 rounded-full bg-cyan-500" />
+                )}
+              </div>
+            </div>
+
+            {/* Clear filters button */}
+            {activeFilterCount > 0 && (
+              <div className="flex items-end">
+                <button 
+                  onClick={() => { setFilter('all'); setFilterCategory('all'); setFilterAccount('all'); }}
+                  className="flex items-center gap-1.5 px-4 py-3 bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 rounded-2xl text-[10px] font-black uppercase tracking-wider hover:bg-slate-200 dark:hover:bg-slate-700 transition-all active:scale-95 border-2 border-transparent whitespace-nowrap"
+                >
+                  <X size={12} />
+                  Limpiar ({activeFilterCount})
+                </button>
+              </div>
+            )}
           </div>
 
           <div className="flex items-center gap-3 bg-white dark:bg-slate-800 px-5 py-3 rounded-2xl border border-slate-200 dark:border-slate-700 w-full shadow-sm focus-within:ring-2 focus-within:ring-blue-500 transition-all">

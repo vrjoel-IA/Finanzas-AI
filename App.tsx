@@ -700,20 +700,97 @@ const Header = ({ onMenuClick }: { onMenuClick: () => void }) => {
 const PeriodDropdown: React.FC<{ currentDate: string; viewMode: 'month' | 'year'; setPeriod: (date: string) => void; onClose: () => void; }> = ({ currentDate, viewMode, setPeriod, onClose }) => {
   const monthNames = ["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"];
   const currentYear = parseInt(currentDate.substring(0, 4));
-  const currentMonth = viewMode === 'month' && currentDate.length === 7 ? parseInt(currentDate.substring(5, 7)) - 1 : -1; 
+  const currentMonth = viewMode === 'month' && currentDate.length === 7 ? parseInt(currentDate.substring(5, 7)) - 1 : -1;
+  const [yearPage, setYearPage] = useState(currentYear);
   const dropdownRef = useRef<HTMLDivElement>(null);
+  const overlayRef = useRef<HTMLDivElement>(null);
+
   useEffect(() => {
-    const handleClickOutside = (event: MouseEvent) => { if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) onClose(); };
+    const handleClickOutside = (event: MouseEvent) => {
+      if (overlayRef.current && overlayRef.current === event.target) onClose();
+    };
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, [onClose]);
+
+  useEffect(() => {
+    const handleEsc = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    document.addEventListener('keydown', handleEsc);
+    return () => document.removeEventListener('keydown', handleEsc);
+  }, [onClose]);
+
   return (
-    <div ref={dropdownRef} className="absolute top-full left-1/2 -translate-x-1/2 mt-2 bg-white dark:bg-slate-900 rounded-2xl shadow-xl z-50 p-2 border border-slate-100 dark:border-slate-700 animate-in fade-in slide-in-from-top-2 duration-200">
-      {viewMode === 'month' ? (
-        <div className="grid grid-cols-3 gap-2 px-1 max-w-[360px]">{monthNames.map((name, index) => (<button key={index} onClick={() => setPeriod(`${currentYear}-${String(index + 1).padStart(2, '0')}`)} className={`block px-2 py-2 text-xs font-semibold rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors whitespace-nowrap overflow-hidden text-ellipsis ${index === currentMonth ? 'bg-blue-600 text-white' : 'text-slate-700 dark:text-slate-300'}`}>{name}</button>))}</div>
-      ) : (
-        <div className="grid grid-cols-2 gap-2 px-1 max-w-[240px] max-h-60 overflow-y-auto custom-scrollbar">{Array.from({ length: 11 }, (_, i) => currentYear - 5 + i).map(year => (<button key={year} onClick={() => setPeriod(year.toString())} className={`block px-2 py-2 text-xs font-semibold rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors whitespace-nowrap overflow-hidden text-ellipsis ${year === currentYear ? 'bg-blue-600 text-white' : 'text-slate-700 dark:text-slate-300'}`}>Año {year}</button>))}</div>
-      )}
+    <div ref={overlayRef} className="fixed inset-0 z-[100] flex items-start justify-center" style={{ paddingTop: '72px' }}>
+      <div 
+        ref={dropdownRef} 
+        className="bg-white dark:bg-slate-900 rounded-3xl shadow-2xl border border-slate-200 dark:border-slate-700 p-5 w-[340px] max-w-[95vw]"
+        style={{ animation: 'fadeSlideIn 0.2s ease-out' }}
+      >
+        {/* Year Navigation */}
+        <div className="flex items-center justify-between mb-4 px-1">
+          <button onClick={() => setYearPage(y => y - 1)} className="p-2 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-500 dark:text-slate-400 transition-all active:scale-90">
+            <ChevronLeft size={18} />
+          </button>
+          <span className="text-sm font-black text-slate-800 dark:text-white tracking-wider uppercase">{yearPage}</span>
+          <button onClick={() => setYearPage(y => y + 1)} className="p-2 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-500 dark:text-slate-400 transition-all active:scale-90">
+            <ChevronRight size={18} />
+          </button>
+        </div>
+
+        {viewMode === 'month' ? (
+          <div className="grid grid-cols-3 gap-2">
+            {monthNames.map((name, index) => {
+               const isSelected = index === currentMonth && yearPage === currentYear;
+               return (
+                 <button 
+                   key={index} 
+                   onClick={() => setPeriod(`${yearPage}-${String(index + 1).padStart(2, '0')}`)}
+                   className={`px-3 py-3 text-xs font-bold rounded-2xl transition-all duration-150 active:scale-95 ${
+                     isSelected 
+                       ? 'bg-blue-600 text-white shadow-lg shadow-blue-200 dark:shadow-blue-900/50' 
+                       : 'text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800'
+                   }`}
+                 >
+                   {name}
+                 </button>
+               );
+            })}
+          </div>
+        ) : (
+          <div className="grid grid-cols-3 gap-2">
+            {Array.from({ length: 9 }, (_, i) => yearPage - 4 + i).map(year => {
+              const isSelected = year === currentYear;
+              return (
+                <button 
+                  key={year} 
+                  onClick={() => setPeriod(year.toString())}
+                  className={`px-3 py-3 text-xs font-bold rounded-2xl transition-all duration-150 active:scale-95 ${
+                    isSelected 
+                      ? 'bg-blue-600 text-white shadow-lg shadow-blue-200 dark:shadow-blue-900/50' 
+                      : 'text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800'
+                  }`}
+                >
+                  {year}
+                </button>
+              );
+            })}
+          </div>
+        )}
+
+        {/* Quick Today button */}
+        <div className="mt-4 pt-3 border-t border-slate-100 dark:border-slate-800">
+          <button 
+            onClick={() => {
+              const now = new Date();
+              if (viewMode === 'month') setPeriod(`${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`);
+              else setPeriod(now.getFullYear().toString());
+            }}
+            className="w-full py-2.5 text-[11px] font-black text-blue-600 dark:text-blue-400 uppercase tracking-widest rounded-xl hover:bg-blue-50 dark:hover:bg-blue-900/20 transition-all"
+          >
+            Ir a Hoy
+          </button>
+        </div>
+      </div>
     </div>
   );
 };
