@@ -406,7 +406,7 @@ const Transactions: React.FC = () => {
   };
 
   return (
-    <div className="space-y-8 animate-in fade-in duration-500 pb-20 max-w-6xl mx-auto px-4 transition-colors">
+    <div className="space-y-6 md:space-y-8 animate-in fade-in duration-500 pb-20 max-w-6xl mx-auto px-2 md:px-4 transition-colors">
       
       {isScanning && (
         <div className="fixed inset-0 bg-slate-900/90 z-[100] flex flex-col items-center justify-center p-6 text-center">
@@ -419,12 +419,12 @@ const Transactions: React.FC = () => {
         </div>
       )}
 
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 md:gap-6">
         <div>
-          <h2 className="text-3xl font-black text-slate-800 dark:text-white tracking-tight">Transacciones</h2>
-          <p className="text-slate-700 dark:text-slate-400 font-bold text-sm">Historial de {viewMode === 'year' ? `todo el año ${currentDate}` : currentDate}.</p>
+          <h2 className="text-2xl md:text-3xl font-black text-slate-800 dark:text-white tracking-tight">Transacciones</h2>
+          <p className="text-slate-700 dark:text-slate-400 font-bold text-xs md:text-sm">Historial de {viewMode === 'year' ? `todo el año ${currentDate}` : currentDate}.</p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex gap-1.5 md:gap-2 items-center flex-shrink-0">
           {undoCount > 0 && (
             confirmUndo ? (
               <div className="flex items-center gap-1">
@@ -438,46 +438,49 @@ const Transactions: React.FC = () => {
                       setTimeout(() => setUndoToast(null), 3000);
                     }
                   }}
-                  className="flex items-center gap-2 px-5 py-4 bg-rose-600 text-white font-black rounded-2xl transition-all shadow-lg active:scale-95 animate-in zoom-in duration-200"
+                  className="flex items-center gap-1.5 px-3 md:px-5 py-3 md:py-4 bg-rose-600 text-white font-black text-xs md:text-sm rounded-xl md:rounded-2xl transition-all shadow-lg active:scale-95 animate-in zoom-in duration-200"
                 >
-                  Confirmar
+                  <Check size={16} />
+                  <span className="hidden md:inline">Confirmar</span>
                 </button>
                 <button 
                   onClick={() => setConfirmUndo(false)}
-                  className="p-4 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-500 rounded-2xl hover:bg-slate-50 dark:hover:bg-slate-700 transition-all"
+                  className="p-3 md:p-4 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-500 rounded-xl md:rounded-2xl hover:bg-slate-50 dark:hover:bg-slate-700 transition-all"
                 >
-                  <X size={20} />
+                  <X size={16} />
                 </button>
               </div>
             ) : (
               <button 
                 onClick={() => setConfirmUndo(true)}
-                className="flex items-center gap-2 px-5 py-4 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 font-black rounded-2xl hover:bg-slate-50 dark:hover:bg-slate-700 transition-all shadow-sm active:scale-95"
+                className="flex items-center gap-1.5 p-3 md:px-5 md:py-4 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 font-black rounded-xl md:rounded-2xl hover:bg-slate-50 dark:hover:bg-slate-700 transition-all shadow-sm active:scale-95"
+                title="Deshacer"
               >
-                <Undo2 size={20} className="text-amber-500" />
-                <span>Deshacer</span>
+                <Undo2 size={18} className="text-amber-500" />
+                <span className="hidden md:inline text-sm">Deshacer</span>
               </button>
             )
           )}
           <button 
             onClick={() => fileInputRef.current?.click()}
             disabled={isScanning}
-            className="flex items-center gap-2 px-6 py-4 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 font-black rounded-2xl hover:bg-slate-50 dark:hover:bg-slate-700 transition-all shadow-sm active:scale-95 disabled:opacity-50"
+            className="flex items-center gap-1.5 p-3 md:px-5 md:py-4 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 font-black rounded-xl md:rounded-2xl hover:bg-slate-50 dark:hover:bg-slate-700 transition-all shadow-sm active:scale-95 disabled:opacity-50"
+            title="Aura Vision"
           >
-            <Camera size={20} className="text-blue-500" />
-            <span>Aura Vision</span>
+            <Camera size={18} className="text-blue-500" />
+            <span className="hidden md:inline text-sm">Aura Vision</span>
           </button>
           <input type="file" ref={fileInputRef} className="hidden" accept="image/*" onChange={handleFileChange} />
           
-          <button onClick={() => { setEditingTx(null); setIsAdding(true); }} className="flex items-center gap-2 px-8 py-4 bg-blue-600 text-white font-black rounded-2xl hover:bg-blue-700 transition-all shadow-xl shadow-blue-200 dark:shadow-none active:scale-95">
-            <Plus size={20} /> 
+          <button onClick={() => { setEditingTx(null); setIsAdding(true); }} className="flex items-center gap-1.5 px-4 py-3 md:px-8 md:py-4 bg-blue-600 text-white font-black text-sm rounded-xl md:rounded-2xl hover:bg-blue-700 transition-all shadow-xl shadow-blue-200 dark:shadow-none active:scale-95">
+            <Plus size={18} /> 
             <span>Nueva</span>
           </button>
         </div>
       </div>
 
-      <div className="bg-white dark:bg-slate-900 rounded-[2.5rem] border border-slate-100 dark:border-slate-800 shadow-xl shadow-slate-200/50 dark:shadow-none overflow-hidden transition-all duration-300">
-        <div className="p-4 md:p-6 border-b border-slate-100 dark:border-slate-800 flex flex-col gap-4 bg-slate-50/30 dark:bg-slate-800/20">
+      <div className="bg-white dark:bg-slate-900 rounded-2xl md:rounded-[2.5rem] border border-slate-100 dark:border-slate-800 shadow-xl shadow-slate-200/50 dark:shadow-none overflow-hidden transition-all duration-300">
+        <div className="p-3 md:p-6 border-b border-slate-100 dark:border-slate-800 flex flex-col gap-3 md:gap-4 bg-slate-50/30 dark:bg-slate-800/20">
           
           {/* Filter Dropdowns Row */}
           <div className="flex flex-col sm:flex-row gap-3">
@@ -571,9 +574,9 @@ const Transactions: React.FC = () => {
           <table className="w-full border-collapse table-fixed">
             <thead>
               <tr className="bg-slate-50/50 dark:bg-slate-800/30 text-[10px] uppercase tracking-[0.15em] text-slate-400 dark:text-slate-500 font-black border-b border-slate-100 dark:border-slate-800">
-                <th className="px-6 py-5 text-left w-[25%] md:w-[20%]">Fecha</th>
-                <th className="px-6 py-5 text-left w-[45%] md:w-[50%]">Detalle</th>
-                <th className="px-6 py-5 text-right w-[30%]">Importe</th>
+                <th className="px-2 md:px-6 py-4 md:py-5 text-left w-[22%] md:w-[20%]">Fecha</th>
+                <th className="px-2 md:px-6 py-4 md:py-5 text-left w-[48%] md:w-[50%]">Detalle</th>
+                <th className="px-2 md:px-6 py-4 md:py-5 text-right w-[30%]">Importe</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-50 dark:divide-slate-800">
@@ -585,23 +588,23 @@ const Transactions: React.FC = () => {
                     onClick={() => { setViewingTx(tx); setConfirmDeleteInModal(false); }}
                     className="hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-all group cursor-pointer active:bg-slate-100 dark:active:bg-slate-800"
                   >
-                    <td className="px-6 py-6 text-[11px] font-black text-slate-500 dark:text-slate-500 uppercase">
+                    <td className="px-2 md:px-6 py-4 md:py-6 text-[11px] font-black text-slate-500 dark:text-slate-500 uppercase">
                       {new Date(tx.date).toLocaleDateString('es-ES', { day: '2-digit', month: 'short' })}
                     </td>
-                    <td className="px-6 py-6">
-                      <div className="flex items-center gap-4 overflow-hidden">
-                        <div className={`flex w-9 h-9 rounded-xl items-center justify-center flex-shrink-0 shadow-sm ${style.bg} ${style.color}`}>
+                    <td className="px-2 md:px-6 py-4 md:py-6">
+                      <div className="flex items-center gap-2.5 md:gap-4 overflow-hidden">
+                        <div className={`flex w-8 h-8 md:w-9 md:h-9 rounded-lg md:rounded-xl items-center justify-center flex-shrink-0 shadow-sm ${style.bg} ${style.color}`}>
                           {style.icon}
                         </div>
                         <div className="min-w-0 flex flex-col">
-                          <span className="font-black text-slate-800 dark:text-slate-100 text-[13px] truncate leading-tight transition-colors">
+                          <span className="font-black text-slate-800 dark:text-slate-100 text-[12px] md:text-[13px] truncate leading-tight transition-colors">
                             {tx.description}
                           </span>
                           <span className="text-[9px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-wider mt-0.5 truncate">{tx.category}</span>
                         </div>
                       </div>
                     </td>
-                    <td className={`px-6 py-6 text-right font-black text-lg ${style.color}`}>
+                    <td className={`px-2 md:px-6 py-4 md:py-6 text-right font-black text-base md:text-lg ${style.color}`}>
                       {tx.type === 'income' ? '+' : '-'}{Math.abs(tx.amount).toLocaleString('es-ES', { minimumFractionDigits: 2 })}€
                     </td>
                   </tr>
