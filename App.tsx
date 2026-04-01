@@ -541,8 +541,12 @@ const App: React.FC = () => {
       return { ...prev, budgets: [...filteredBudgets, ...newBudgets] };
     }),
     getEffectiveBudgets: (targetDate) => {
-      // Presupuestos 100% independientes por periodo - sin herencia
-      return state.budgets.filter(b => b.period === targetDate);
+      // Presupuestos del periodo + legacy (sin periodo)
+      const periodSpecific = state.budgets.filter(b => b.period === targetDate);
+      const legacy = state.budgets.filter(b => !b.period);
+      const specificCategories = new Set(periodSpecific.map(b => b.category));
+      const uniqueLegacy = legacy.filter(b => !specificCategories.has(b.category));
+      return [...periodSpecific, ...uniqueLegacy];
     },
 
     addTransaction: (t, myPart) => {

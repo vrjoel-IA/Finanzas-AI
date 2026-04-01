@@ -426,7 +426,7 @@ const BudgetManager: React.FC = () => {
                         className={`h-full rounded-full transition-all duration-1000 ease-out`} 
                         style={{ 
                           width: `${progress}%`,
-                          backgroundColor: isOverBudget ? (theme === 'dark' ? '#f43f5e' : '#f43f5e') : b.color 
+                          background: `linear-gradient(90deg, ${b.color}40 0%, ${b.color} 100%)` 
                         }}
                       ></div>
                     </div>
@@ -492,7 +492,7 @@ const BudgetManager: React.FC = () => {
                     className={`h-full rounded-full transition-all duration-1000`} 
                     style={{ 
                       width: `${Math.min((selectedBudget.spent / selectedBudget.limit) * 100, 100)}%`,
-                      backgroundColor: (selectedBudget.type === 'expense' && selectedBudget.spent > selectedBudget.limit) ? '#f43f5e' : selectedBudget.color 
+                      background: `linear-gradient(90deg, ${selectedBudget.color}40 0%, ${selectedBudget.color} 100%)` 
                     }}
                   ></div>
                </div>
