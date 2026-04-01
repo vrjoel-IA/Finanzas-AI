@@ -1,5 +1,4 @@
-
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { useFinance } from '../App';
 import { 
   Plus, 
@@ -50,6 +49,43 @@ const BudgetManager: React.FC = () => {
   const [isCustomMode, setIsCustomMode] = useState(false);
   const [selectedIcon, setSelectedIcon] = useState('ShoppingBag');
   const [selectedColor, setSelectedColor] = useState('#3b82f6');
+
+  // --- AUTO-MIGRACIÓN ---
+  // Si el mes actual no tiene presupuestos, copiar del mes más reciente que sí tenga.
+  // Esto asegura que los datos existentes no "desaparezcan" al cambiar de mes.
+  const autoMigratedRef = useRef<Set<string>>(new Set());
+  
+  useEffect(() => {
+    if (!currentDate || autoMigratedRef.current.has(currentDate)) return;
+    
+    const currentPeriodBudgets = budgets.filter(b => b.period === currentDate);
+    if (currentPeriodBudgets.length > 0) return; // Ya tiene presupuestos, no hacer nada
+    
+    // Buscar el periodo más reciente que tenga presupuestos
+    const allPeriods = getPeriodsWithBudgets().filter(p => p !== currentDate);
+    
+    // También buscar presupuestos legacy sin period
+    const legacyBudgets = budgets.filter(b => !b.period);
+    
+    if (allPeriods.length > 0) {
+      // Copiar del mes más reciente
+      autoMigratedRef.current.add(currentDate);
+      importBudgetFromMonth(allPeriods[0], currentDate);
+    } else if (legacyBudgets.length > 0) {
+      // Migrar presupuestos legacy al mes actual
+      autoMigratedRef.current.add(currentDate);
+      legacyBudgets.forEach(b => {
+        addBudget({
+          category: b.category,
+          limit: b.limit,
+          type: b.type,
+          icon: b.icon,
+          color: b.color,
+          period: currentDate
+        });
+      });
+    }
+  }, [currentDate, budgets, getPeriodsWithBudgets, importBudgetFromMonth, addBudget]);
 
   // --- PRESUPUESTOS INDEPENDIENTES POR PERIODO ---
   // Solo mostrar presupuestos que pertenezcan EXACTAMENTE al periodo actual
