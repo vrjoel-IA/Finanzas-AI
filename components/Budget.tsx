@@ -51,46 +51,38 @@ const BudgetManager: React.FC = () => {
   const [selectedColor, setSelectedColor] = useState('#3b82f6');
 
   // --- AUTO-MIGRACIÓN ---
-  // Si el mes actual no tiene presupuestos, copiar del mes más reciente que sí tenga.
-  // Esto asegura que los datos existentes no "desaparezcan" al cambiar de mes.
+  // Solo para budgets con periodo: si el mes actual no tiene ninguno específico,
+  // copiar del mes más reciente. Los legacy (sin periodo) siempre se muestran.
   const autoMigratedRef = useRef<Set<string>>(new Set());
   
   useEffect(() => {
     if (!currentDate || autoMigratedRef.current.has(currentDate)) return;
     
+    // Comprobar si hay presupuestos específicos de este periodo
     const currentPeriodBudgets = budgets.filter(b => b.period === currentDate);
-    if (currentPeriodBudgets.length > 0) return; // Ya tiene presupuestos, no hacer nada
+    if (currentPeriodBudgets.length > 0) return; // Ya tiene budget propio
     
-    // Buscar el periodo más reciente que tenga presupuestos
+    // Buscar otro mes con presupuestos específicos para importar
     const allPeriods = getPeriodsWithBudgets().filter(p => p !== currentDate);
     
-    // También buscar presupuestos legacy sin period
-    const legacyBudgets = budgets.filter(b => !b.period);
-    
     if (allPeriods.length > 0) {
-      // Copiar del mes más reciente
       autoMigratedRef.current.add(currentDate);
       importBudgetFromMonth(allPeriods[0], currentDate);
-    } else if (legacyBudgets.length > 0) {
-      // Migrar presupuestos legacy al mes actual
-      autoMigratedRef.current.add(currentDate);
-      legacyBudgets.forEach(b => {
-        addBudget({
-          category: b.category,
-          limit: b.limit,
-          type: b.type,
-          icon: b.icon,
-          color: b.color,
-          period: currentDate
-        });
-      });
     }
-  }, [currentDate, budgets, getPeriodsWithBudgets, importBudgetFromMonth, addBudget]);
+  }, [currentDate, budgets, getPeriodsWithBudgets, importBudgetFromMonth]);
 
-  // --- PRESUPUESTOS INDEPENDIENTES POR PERIODO ---
-  // Solo mostrar presupuestos que pertenezcan EXACTAMENTE al periodo actual
+  // --- PRESUPUESTOS DEL PERIODO ---
+  // Incluye: presupuestos específicos del periodo actual + legacy (sin periodo)
+  // Los legacy se muestran en cada mes hasta que el usuario los elimine o los asigne
   const periodBudgets = useMemo(() => {
-    return budgets.filter(b => b.period === currentDate);
+    const periodSpecific = budgets.filter(b => b.period === currentDate);
+    const legacy = budgets.filter(b => !b.period);
+    
+    // Evitar duplicados: si un legacy tiene la misma categoría que uno específico, priorizar el específico
+    const specificCategories = new Set(periodSpecific.map(b => b.category));
+    const uniqueLegacy = legacy.filter(b => !specificCategories.has(b.category));
+    
+    return [...periodSpecific, ...uniqueLegacy];
   }, [budgets, currentDate]);
 
   // Cálculo dinámico de presupuestos con su gasto real
