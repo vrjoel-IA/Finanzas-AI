@@ -22,13 +22,16 @@ import {
   History,
   ArrowRight,
   Palette,
-  Check
+  Check,
+  Undo2,
+  Download,
+  Copy
 } from 'lucide-react';
 import { Budget, Transaction } from '../types';
 import { CATEGORIES, INCOME_CATEGORIES, ICON_MAP, BUDGET_PRESET_COLORS } from '../constants';
 
 const BudgetManager: React.FC = () => {
-  const { budgets, transactions, currentDate, updateBudget, addBudget, deleteBudget, accounts, theme } = useFinance();
+  const { budgets, transactions, currentDate, updateBudget, addBudget, deleteBudget, accounts, theme, importBudgetFromMonth, undoBudgetChange, budgetUndoCount, getPeriodsWithBudgets } = useFinance();
   
   // UI States
   const [activeTab, setActiveTab] = useState<'expense' | 'income'>('expense');
@@ -36,6 +39,9 @@ const BudgetManager: React.FC = () => {
   const [isEditing, setIsEditing] = useState<Budget | null>(null);
   const [isCreating, setIsCreating] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [showImportModal, setShowImportModal] = useState(false);
+  const [confirmUndo, setConfirmUndo] = useState(false);
+  const [undoToast, setUndoToast] = useState<string | null>(null);
   
   // Form States
   const [category, setCategory] = useState('');
@@ -45,29 +51,26 @@ const BudgetManager: React.FC = () => {
   const [selectedIcon, setSelectedIcon] = useState('ShoppingBag');
   const [selectedColor, setSelectedColor] = useState('#3b82f6');
 
+  // --- PRESUPUESTOS INDEPENDIENTES POR PERIODO ---
+  // Solo mostrar presupuestos que pertenezcan EXACTAMENTE al periodo actual
+  const periodBudgets = useMemo(() => {
+    return budgets.filter(b => b.period === currentDate);
+  }, [budgets, currentDate]);
+
   // Cálculo dinámico de presupuestos con su gasto real
   const budgetsWithCalculatedSpent = useMemo(() => {
-    return budgets.map(b => {
+    return periodBudgets.map(b => {
       const calculatedSpent = transactions
         .filter(t => t.date.startsWith(currentDate) && t.category === b.category)
         .reduce((sum, t) => {
-          // Para presupuestos de gasto:
           if (b.type === 'expense') {
-            if (t.type === 'expense') {
-              return sum + t.amount; // Gastos regulares aumentan el 'spent'
-            }
-            if (t.type === 'income' && t.refundId) {
-              return sum - t.amount; // Ingresos por reembolso disminuyen el 'spent'
-            }
+            if (t.type === 'expense') return sum + t.amount;
+            if (t.type === 'income' && t.refundId) return sum - t.amount;
           }
-          // Para presupuestos de ingreso:
           if (b.type === 'income') {
-            // Solo cuenta ingresos que NO son reembolsos
-            if (t.type === 'income' && !t.refundId) {
-              return sum + t.amount; // Ingresos regulares (ej: nómina) aumentan el 'spent'
-            }
+            if (t.type === 'income' && !t.refundId) return sum + t.amount;
           }
-          return sum; // No cuenta otros tipos de transacciones
+          return sum;
         }, 0);
       
       const totalRefunded = transactions
@@ -76,7 +79,7 @@ const BudgetManager: React.FC = () => {
       
       return { ...b, spent: calculatedSpent, totalRefunded };
     });
-  }, [budgets, transactions, currentDate]);
+  }, [periodBudgets, transactions, currentDate]);
 
   const filteredBudgets = useMemo(() => {
     return budgetsWithCalculatedSpent.filter(b => b.type === activeTab);
@@ -97,6 +100,11 @@ const BudgetManager: React.FC = () => {
       actual: b.reduce((s, x) => s + x.spent, 0)
     };
   }, [budgetsWithCalculatedSpent, activeTab]);
+
+  // Periodos disponibles para importar (excluir el actual)
+  const availableImportPeriods = useMemo(() => {
+    return getPeriodsWithBudgets().filter(p => p !== currentDate);
+  }, [getPeriodsWithBudgets, currentDate]);
 
   const handleSave = (e: React.FormEvent) => {
     e.preventDefault();
@@ -169,20 +177,82 @@ const BudgetManager: React.FC = () => {
     }
   };
 
+  const handleImport = (sourceDate: string) => {
+    importBudgetFromMonth(sourceDate, currentDate);
+    setShowImportModal(false);
+  };
+
+  const handleUndo = () => {
+    const result = undoBudgetChange();
+    setConfirmUndo(false);
+    if (result) {
+      setUndoToast(`Deshecho: ${result.label}`);
+      setTimeout(() => setUndoToast(null), 3000);
+    }
+  };
+
+  const formatPeriodLabel = (period: string) => {
+    if (!period.includes('-')) return period;
+    const [y, m] = period.split('-');
+    const months = ['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
+    return `${months[parseInt(m) - 1]} ${y}`;
+  };
+
   return (
-    <div className="space-y-8 animate-in fade-in duration-500 pb-20 transition-colors">
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
+    <div className="space-y-6 md:space-y-8 animate-in fade-in duration-500 pb-20 px-2 md:px-0 transition-colors">
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 md:gap-6">
         <div>
-          <h2 className="text-3xl font-black text-slate-800 dark:text-white tracking-tight">Presupuestos</h2>
-          <p className="text-slate-500 dark:text-slate-400 font-medium tracking-tight transition-colors">Controla tus finanzas de {currentDate} con precisión.</p>
+          <h2 className="text-2xl md:text-3xl font-black text-slate-800 dark:text-white tracking-tight">Presupuestos</h2>
+          <p className="text-slate-500 dark:text-slate-400 font-medium text-xs md:text-sm tracking-tight transition-colors">Controla tus finanzas de {formatPeriodLabel(currentDate)} con precisión.</p>
         </div>
-        <button 
-          onClick={openCreate}
-          className="flex items-center gap-2 px-8 py-4 bg-blue-600 text-white font-black rounded-2xl hover:bg-blue-700 transition-all shadow-xl shadow-blue-200 dark:shadow-none active:scale-95"
-        >
-          <Plus size={20} />
-          Nuevo Límite
-        </button>
+        <div className="flex gap-1.5 md:gap-2 items-center flex-shrink-0">
+          {/* Undo Button */}
+          {budgetUndoCount > 0 && (
+            confirmUndo ? (
+              <div className="flex items-center gap-1">
+                <button 
+                  onClick={handleUndo}
+                  className="flex items-center gap-1.5 px-3 md:px-5 py-3 md:py-4 bg-rose-600 text-white font-black text-xs md:text-sm rounded-xl md:rounded-2xl transition-all shadow-lg active:scale-95 animate-in zoom-in duration-200"
+                >
+                  <Check size={16} />
+                  <span className="hidden md:inline">Confirmar</span>
+                </button>
+                <button 
+                  onClick={() => setConfirmUndo(false)}
+                  className="p-3 md:p-4 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-500 rounded-xl md:rounded-2xl hover:bg-slate-50 dark:hover:bg-slate-700 transition-all"
+                >
+                  <X size={16} />
+                </button>
+              </div>
+            ) : (
+              <button 
+                onClick={() => setConfirmUndo(true)}
+                className="flex items-center gap-1.5 p-3 md:px-5 md:py-4 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 font-black rounded-xl md:rounded-2xl hover:bg-slate-50 dark:hover:bg-slate-700 transition-all shadow-sm active:scale-95"
+                title="Deshacer"
+              >
+                <Undo2 size={18} className="text-amber-500" />
+                <span className="hidden md:inline text-sm">Deshacer</span>
+              </button>
+            )
+          )}
+          {/* Import Button */}
+          <button 
+            onClick={() => setShowImportModal(true)}
+            className="flex items-center gap-1.5 p-3 md:px-5 md:py-4 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 font-black rounded-xl md:rounded-2xl hover:bg-slate-50 dark:hover:bg-slate-700 transition-all shadow-sm active:scale-95"
+            title="Importar de otro mes"
+          >
+            <Copy size={18} className="text-violet-500" />
+            <span className="hidden md:inline text-sm">Importar</span>
+          </button>
+          {/* New Budget Button */}
+          <button 
+            onClick={openCreate}
+            className="flex items-center gap-1.5 px-4 py-3 md:px-8 md:py-4 bg-blue-600 text-white font-black text-sm rounded-xl md:rounded-2xl hover:bg-blue-700 transition-all shadow-xl shadow-blue-200 dark:shadow-none active:scale-95"
+          >
+            <Plus size={18} />
+            <span>Nuevo</span>
+          </button>
+        </div>
       </div>
 
       <div className="flex items-center gap-1 bg-slate-100 dark:bg-slate-800 p-1.5 rounded-3xl w-full md:w-fit border border-slate-200 dark:border-slate-700 shadow-inner">
@@ -200,126 +270,159 @@ const BudgetManager: React.FC = () => {
         </button>
       </div>
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-        <div className={`p-6 rounded-[2.5rem] border shadow-sm flex items-center gap-4 bg-white dark:bg-slate-900 border-slate-100 dark:border-slate-800 transition-colors`}>
-          <div className={`w-12 h-12 rounded-2xl flex items-center justify-center transition-colors ${activeTab === 'expense' ? 'bg-rose-50 dark:bg-rose-900/40 text-rose-500 dark:text-rose-400' : 'bg-emerald-50 dark:bg-emerald-900/40 text-emerald-500 dark:text-emerald-400'}`}>
-            <ShoppingBag size={24} />
+      {/* Empty state when no budgets for this period */}
+      {periodBudgets.length === 0 && (
+        <div className="bg-white dark:bg-slate-900 rounded-2xl md:rounded-[2.5rem] border-2 border-dashed border-slate-200 dark:border-slate-700 p-10 md:p-16 text-center transition-colors">
+          <div className="w-16 h-16 bg-slate-100 dark:bg-slate-800 rounded-2xl flex items-center justify-center mx-auto mb-4">
+            <Calendar size={28} className="text-slate-400 dark:text-slate-600" />
           </div>
-          <div>
-            <p className="text-[10px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-widest">Total {activeTab === 'expense' ? 'Presupuestado' : 'Objetivo'}</p>
-            <p className="text-2xl font-black text-slate-800 dark:text-white transition-colors">{totals.limit.toLocaleString()}€</p>
-          </div>
-        </div>
-        <div className="bg-white dark:bg-slate-900 p-6 rounded-[2.5rem] border border-slate-100 dark:border-slate-800 shadow-sm flex items-center gap-4 transition-colors">
-          <div className={`w-12 h-12 rounded-2xl flex items-center justify-center bg-blue-50 dark:bg-blue-900/40 text-blue-600 dark:text-blue-400`}>
-            <ArrowLeftRight size={24} />
-          </div>
-          <div>
-            <p className="text-[10px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-widest">{activeTab === 'expense' ? 'Consumo Real' : 'Ingreso Real'}</p>
-            <p className="text-2xl font-black text-blue-600 dark:text-blue-400 transition-colors">{totals.actual.toLocaleString()}€</p>
-          </div>
-        </div>
-      </div>
-
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-        {filteredBudgets.map(b => {
-          const progress = b.limit > 0 ? Math.min((b.spent / b.limit) * 100, 100) : 0;
-          const isOverBudget = activeTab === 'expense' && b.spent > b.limit;
-          const isConfirmingDelete = deletingId === b.id;
-          
-          return (
-            <div 
-              key={b.id} 
-              onClick={() => setSelectedBudget(b)}
-              className="bg-white dark:bg-slate-900 rounded-[2.5rem] p-8 border border-slate-100 dark:border-slate-800 shadow-sm hover:shadow-md transition-all group cursor-pointer active:scale-[0.99] duration-300"
+          <h3 className="text-lg font-black text-slate-800 dark:text-white mb-2">Sin presupuesto para {formatPeriodLabel(currentDate)}</h3>
+          <p className="text-sm text-slate-400 dark:text-slate-500 mb-6 max-w-md mx-auto">
+            Cada mes tiene su propio presupuesto independiente. Crea categorías nuevas o importa la configuración de otro mes.
+          </p>
+          <div className="flex flex-col sm:flex-row gap-3 justify-center">
+            <button 
+              onClick={openCreate}
+              className="flex items-center justify-center gap-2 px-6 py-3 bg-blue-600 text-white font-black rounded-2xl hover:bg-blue-700 transition-all shadow-lg active:scale-95"
             >
-              <div className="flex justify-between items-start mb-6">
-                <div className="flex items-center gap-4">
-                  <div 
-                    className={`w-14 h-14 rounded-2xl flex items-center justify-center shadow-inner dark:shadow-none transition-colors`}
-                    style={{ backgroundColor: `${b.color}${theme === 'dark' ? '30' : '15'}`, color: b.color }}
-                  >
-                    {ICON_MAP[b.icon] ? (
-                      React.cloneElement(ICON_MAP[b.icon] as React.ReactElement, { size: 24 })
-                    ) : (
-                      <span className="text-2xl">{b.icon || <Tag size={24} />}</span>
-                    )}
-                  </div>
-                  <div>
-                    <h4 className="text-lg font-black text-slate-800 dark:text-white tracking-tight transition-colors">{b.category}</h4>
-                    <p className="text-xs text-slate-400 dark:text-slate-500 font-bold uppercase tracking-widest">{activeTab === 'expense' ? 'Gasto' : 'Ingreso'}</p>
-                  </div>
-                </div>
-                <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-all">
-                  <button 
-                    onClick={(e) => { e.stopPropagation(); openEdit(b); }} 
-                    className="p-2.5 text-slate-400 hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-900/40 rounded-xl transition-colors"
-                  >
-                    <Edit2 size={18} />
-                  </button>
-                  <button 
-                    onClick={(e) => handleDeleteClick(e, b.id)} 
-                    className={`p-2.5 rounded-xl transition-all flex items-center gap-1 ${
-                      isConfirmingDelete 
-                        ? 'bg-rose-600 text-white animate-pulse' 
-                        : 'text-slate-400 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-900/40'
-                    }`}
-                  >
-                    {isConfirmingDelete ? (
-                      <>
-                        <Check size={18} />
-                        <span className="text-[10px] font-black uppercase">¿Borrar?</span>
-                      </>
-                    ) : (
-                      <Trash2 size={18} />
-                    )}
-                  </button>
-                </div>
+              <Plus size={18} /> Crear Categoría
+            </button>
+            {availableImportPeriods.length > 0 && (
+              <button 
+                onClick={() => setShowImportModal(true)}
+                className="flex items-center justify-center gap-2 px-6 py-3 bg-white dark:bg-slate-800 text-violet-600 dark:text-violet-400 font-black border-2 border-violet-200 dark:border-violet-800 rounded-2xl hover:bg-violet-50 dark:hover:bg-violet-900/20 transition-all active:scale-95"
+              >
+                <Copy size={18} /> Importar de otro mes
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+
+      {periodBudgets.length > 0 && (
+        <>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div className={`p-6 rounded-2xl md:rounded-[2.5rem] border shadow-sm flex items-center gap-4 bg-white dark:bg-slate-900 border-slate-100 dark:border-slate-800 transition-colors`}>
+              <div className={`w-12 h-12 rounded-2xl flex items-center justify-center transition-colors ${activeTab === 'expense' ? 'bg-rose-50 dark:bg-rose-900/40 text-rose-500 dark:text-rose-400' : 'bg-emerald-50 dark:bg-emerald-900/40 text-emerald-500 dark:text-emerald-400'}`}>
+                <ShoppingBag size={24} />
               </div>
-
-              <div className="space-y-5">
-                <div className="flex justify-between items-end">
-                   <div>
-                      <p className={`text-4xl font-black tracking-tight ${isOverBudget ? 'text-rose-500 dark:text-rose-400' : 'text-slate-900 dark:text-white'} transition-colors`}>{b.spent.toLocaleString('es-ES')}€</p>
-                      <p className="text-[10px] text-slate-400 dark:text-slate-500 font-black uppercase tracking-widest transition-colors">de {b.limit.toLocaleString()}€ {activeTab === 'expense' ? 'definidos' : 'objetivo'}</p>
-                   </div>
-                   <div className="text-right">
-                      <span 
-                        style={!isOverBudget ? { backgroundColor: `${b.color}${theme === 'dark' ? '30' : '15'}`, color: b.color } : {}}
-                        className={`px-4 py-1.5 rounded-full text-[10px] font-black uppercase tracking-wider transition-colors ${isOverBudget ? 'bg-rose-50 dark:bg-rose-900/40 text-rose-500 dark:text-rose-400' : ''}`}
-                      >
-                        {activeTab === 'expense' ? (isOverBudget ? 'Excedido' : progress > 85 ? 'Cuidado' : 'Correcto') : (b.spent >= b.limit ? 'Logrado' : 'En progreso')}
-                      </span>
-                   </div>
-                </div>
-                <div className="w-full bg-slate-100 dark:bg-slate-800 h-3 rounded-full overflow-hidden transition-colors">
-                  <div 
-                    className={`h-full rounded-full transition-all duration-1000 ease-out`} 
-                    style={{ 
-                      width: `${progress}%`,
-                      backgroundColor: isOverBudget ? (theme === 'dark' ? '#f43f5e' : '#f43f5e') : b.color 
-                    }}
-                  ></div>
-                </div>
-
-                {(b.totalRefunded || 0) > 0 && (
-                  <p className="text-[10px] font-black flex items-center gap-1.5 transition-all" style={{ color: b.color }}>
-                     <ChevronRight size={12} className="shrink-0" /> 
-                     Reembolsado: +{(b.totalRefunded || 0).toLocaleString()}€ (Ahorro en gasto neto)
-                  </p>
-                )}
-
-                <div className="flex items-center justify-between border-t border-slate-50 dark:border-slate-800 pt-3">
-                   <p className="text-xs text-slate-400 dark:text-slate-500 font-bold flex items-center gap-1 transition-colors"><ChevronRight size={14} style={{ color: b.color }} /> Ver detalles</p>
-                   {activeTab === 'expense' && b.limit > b.spent && (
-                     <p className="text-xs font-black text-slate-700 dark:text-slate-300 transition-colors">Dispones de {(b.limit - b.spent).toLocaleString()}€ más</p>
-                   )}
-                </div>
+              <div>
+                <p className="text-[10px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-widest">Total {activeTab === 'expense' ? 'Presupuestado' : 'Objetivo'}</p>
+                <p className="text-2xl font-black text-slate-800 dark:text-white transition-colors">{totals.limit.toLocaleString()}€</p>
               </div>
             </div>
-          );
-        })}
-      </div>
+            <div className="bg-white dark:bg-slate-900 p-6 rounded-2xl md:rounded-[2.5rem] border border-slate-100 dark:border-slate-800 shadow-sm flex items-center gap-4 transition-colors">
+              <div className={`w-12 h-12 rounded-2xl flex items-center justify-center bg-blue-50 dark:bg-blue-900/40 text-blue-600 dark:text-blue-400`}>
+                <ArrowLeftRight size={24} />
+              </div>
+              <div>
+                <p className="text-[10px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-widest">{activeTab === 'expense' ? 'Consumo Real' : 'Ingreso Real'}</p>
+                <p className="text-2xl font-black text-blue-600 dark:text-blue-400 transition-colors">{totals.actual.toLocaleString()}€</p>
+              </div>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 md:gap-6">
+            {filteredBudgets.map(b => {
+              const progress = b.limit > 0 ? Math.min((b.spent / b.limit) * 100, 100) : 0;
+              const isOverBudget = activeTab === 'expense' && b.spent > b.limit;
+              const isConfirmingDelete = deletingId === b.id;
+              
+              return (
+                <div 
+                  key={b.id} 
+                  onClick={() => setSelectedBudget(b)}
+                  className="bg-white dark:bg-slate-900 rounded-2xl md:rounded-[2.5rem] p-6 md:p-8 border border-slate-100 dark:border-slate-800 shadow-sm hover:shadow-md transition-all group cursor-pointer active:scale-[0.99] duration-300"
+                >
+                  <div className="flex justify-between items-start mb-6">
+                    <div className="flex items-center gap-3 md:gap-4">
+                      <div 
+                        className={`w-12 h-12 md:w-14 md:h-14 rounded-2xl flex items-center justify-center shadow-inner dark:shadow-none transition-colors`}
+                        style={{ backgroundColor: `${b.color}${theme === 'dark' ? '30' : '15'}`, color: b.color }}
+                      >
+                        {ICON_MAP[b.icon] ? (
+                          React.cloneElement(ICON_MAP[b.icon] as React.ReactElement, { size: 24 })
+                        ) : (
+                          <span className="text-2xl">{b.icon || <Tag size={24} />}</span>
+                        )}
+                      </div>
+                      <div>
+                        <h4 className="text-base md:text-lg font-black text-slate-800 dark:text-white tracking-tight transition-colors">{b.category}</h4>
+                        <p className="text-xs text-slate-400 dark:text-slate-500 font-bold uppercase tracking-widest">{activeTab === 'expense' ? 'Gasto' : 'Ingreso'}</p>
+                      </div>
+                    </div>
+                    <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-all">
+                      <button 
+                        onClick={(e) => { e.stopPropagation(); openEdit(b); }} 
+                        className="p-2.5 text-slate-400 hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-900/40 rounded-xl transition-colors"
+                      >
+                        <Edit2 size={18} />
+                      </button>
+                      <button 
+                        onClick={(e) => handleDeleteClick(e, b.id)} 
+                        className={`p-2.5 rounded-xl transition-all flex items-center gap-1 ${
+                          isConfirmingDelete 
+                            ? 'bg-rose-600 text-white animate-pulse' 
+                            : 'text-slate-400 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-900/40'
+                        }`}
+                      >
+                        {isConfirmingDelete ? (
+                          <>
+                            <Check size={18} />
+                            <span className="text-[10px] font-black uppercase">¿Borrar?</span>
+                          </>
+                        ) : (
+                          <Trash2 size={18} />
+                        )}
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="space-y-5">
+                    <div className="flex justify-between items-end">
+                       <div>
+                          <p className={`text-3xl md:text-4xl font-black tracking-tight ${isOverBudget ? 'text-rose-500 dark:text-rose-400' : 'text-slate-900 dark:text-white'} transition-colors`}>{b.spent.toLocaleString('es-ES')}€</p>
+                          <p className="text-[10px] text-slate-400 dark:text-slate-500 font-black uppercase tracking-widest transition-colors">de {b.limit.toLocaleString()}€ {activeTab === 'expense' ? 'definidos' : 'objetivo'}</p>
+                       </div>
+                       <div className="text-right">
+                          <span 
+                            style={!isOverBudget ? { backgroundColor: `${b.color}${theme === 'dark' ? '30' : '15'}`, color: b.color } : {}}
+                            className={`px-4 py-1.5 rounded-full text-[10px] font-black uppercase tracking-wider transition-colors ${isOverBudget ? 'bg-rose-50 dark:bg-rose-900/40 text-rose-500 dark:text-rose-400' : ''}`}
+                          >
+                            {activeTab === 'expense' ? (isOverBudget ? 'Excedido' : progress > 85 ? 'Cuidado' : 'Correcto') : (b.spent >= b.limit ? 'Logrado' : 'En progreso')}
+                          </span>
+                       </div>
+                    </div>
+                    <div className="w-full bg-slate-100 dark:bg-slate-800 h-3 rounded-full overflow-hidden transition-colors">
+                      <div 
+                        className={`h-full rounded-full transition-all duration-1000 ease-out`} 
+                        style={{ 
+                          width: `${progress}%`,
+                          backgroundColor: isOverBudget ? (theme === 'dark' ? '#f43f5e' : '#f43f5e') : b.color 
+                        }}
+                      ></div>
+                    </div>
+
+                    {(b.totalRefunded || 0) > 0 && (
+                      <p className="text-[10px] font-black flex items-center gap-1.5 transition-all" style={{ color: b.color }}>
+                         <ChevronRight size={12} className="shrink-0" /> 
+                         Reembolsado: +{(b.totalRefunded || 0).toLocaleString()}€ (Ahorro en gasto neto)
+                      </p>
+                    )}
+
+                    <div className="flex items-center justify-between border-t border-slate-50 dark:border-slate-800 pt-3">
+                       <p className="text-xs text-slate-400 dark:text-slate-500 font-bold flex items-center gap-1 transition-colors"><ChevronRight size={14} style={{ color: b.color }} /> Ver detalles</p>
+                       {activeTab === 'expense' && b.limit > b.spent && (
+                         <p className="text-xs font-black text-slate-700 dark:text-slate-300 transition-colors">Dispones de {(b.limit - b.spent).toLocaleString()}€ más</p>
+                       )}
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </>
+      )}
 
       {/* Modal Ver Detalles */}
       {selectedBudget && (
@@ -402,6 +505,61 @@ const BudgetManager: React.FC = () => {
             <div className="mt-8 pt-6 border-t border-slate-100 dark:border-slate-800 flex-shrink-0">
                <button onClick={() => setSelectedBudget(null)} className="w-full py-4 bg-slate-900 dark:bg-blue-600 text-white font-black rounded-2xl hover:bg-slate-800 dark:hover:bg-blue-700 transition-all active:scale-[0.98]">ENTENDIDO</button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal Importar de otro mes */}
+      {showImportModal && (
+        <div className="fixed inset-0 bg-slate-900/90 z-[60] flex items-center justify-center p-4" onClick={() => setShowImportModal(false)}>
+          <div className="bg-white dark:bg-slate-900 rounded-[3rem] w-full max-w-md p-8 md:p-10 shadow-2xl animate-in fade-in zoom-in duration-300 border border-slate-100 dark:border-slate-800 max-h-[85vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
+            <div className="flex justify-between items-center mb-8">
+              <div className="flex items-center gap-3">
+                <div className="w-12 h-12 bg-violet-50 dark:bg-violet-900/30 rounded-2xl flex items-center justify-center">
+                  <Copy size={22} className="text-violet-500" />
+                </div>
+                <div>
+                  <h3 className="text-xl font-black text-slate-900 dark:text-white tracking-tight">Importar Presupuesto</h3>
+                  <p className="text-xs text-slate-400 dark:text-slate-500 font-bold">Copia categorías de otro mes</p>
+                </div>
+              </div>
+              <button onClick={() => setShowImportModal(false)} className="p-3 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-full text-slate-400 transition-colors"><X size={24} /></button>
+            </div>
+
+            {periodBudgets.length > 0 && (
+              <div className="mb-6 p-4 bg-amber-50 dark:bg-amber-900/20 border-2 border-amber-200 dark:border-amber-800 rounded-2xl">
+                <p className="text-xs font-black text-amber-700 dark:text-amber-400">⚠️ Esto reemplazará todas las categorías actuales de {formatPeriodLabel(currentDate)}.</p>
+              </div>
+            )}
+
+            {availableImportPeriods.length > 0 ? (
+              <div className="space-y-3">
+                {availableImportPeriods.map(period => {
+                  const count = budgets.filter(b => b.period === period).length;
+                  return (
+                    <button
+                      key={period}
+                      onClick={() => handleImport(period)}
+                      className="w-full flex items-center justify-between p-5 bg-slate-50 dark:bg-slate-800 border-2 border-slate-100 dark:border-slate-700 rounded-2xl hover:border-violet-400 dark:hover:border-violet-600 hover:bg-violet-50 dark:hover:bg-violet-900/10 transition-all group active:scale-[0.98]"
+                    >
+                      <div className="flex items-center gap-3">
+                        <Calendar size={18} className="text-slate-400 group-hover:text-violet-500 transition-colors" />
+                        <div className="text-left">
+                          <p className="font-black text-slate-800 dark:text-white text-sm transition-colors">{formatPeriodLabel(period)}</p>
+                          <p className="text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider">{count} categoría{count !== 1 ? 's' : ''}</p>
+                        </div>
+                      </div>
+                      <ArrowRight size={16} className="text-slate-300 group-hover:text-violet-500 transition-colors" />
+                    </button>
+                  );
+                })}
+              </div>
+            ) : (
+              <div className="text-center py-12 bg-slate-50 dark:bg-slate-800/30 rounded-[2rem] border-2 border-dashed border-slate-200 dark:border-slate-700">
+                <AlertCircle size={32} className="mx-auto text-slate-300 dark:text-slate-700 mb-3" />
+                <p className="text-xs font-bold text-slate-400 dark:text-slate-600 uppercase tracking-widest">No hay otros meses con presupuesto</p>
+              </div>
+            )}
           </div>
         </div>
       )}
@@ -503,6 +661,16 @@ const BudgetManager: React.FC = () => {
                 <button type="submit" className="flex-1 py-5 bg-blue-600 text-white font-black rounded-2xl shadow-xl shadow-blue-100 dark:shadow-none flex items-center justify-center gap-2 transition-all active:scale-[0.98]">{isEditing ? <Edit2 size={18}/> : <Plus size={18}/>}{isEditing ? 'GUARDAR' : 'CREAR'}</button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Undo Toast */}
+      {undoToast && (
+        <div className="fixed bottom-24 left-1/2 -translate-x-1/2 z-[90] animate-in slide-in-from-bottom-4 fade-in duration-300">
+          <div className="flex items-center gap-3 bg-slate-900 dark:bg-slate-700 text-white px-6 py-4 rounded-2xl shadow-2xl border border-slate-700 dark:border-slate-600">
+            <Undo2 size={18} className="text-amber-400" />
+            <span className="text-sm font-bold">{undoToast}</span>
           </div>
         </div>
       )}

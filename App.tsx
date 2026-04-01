@@ -100,6 +100,11 @@ interface FinanceContextType extends FinanceState {
   cancelUndoBatch: () => void;
   undoLastAdd: () => {ids: string[], label: string} | null;
   undoCount: number;
+
+  // Budget undo system
+  undoBudgetChange: () => {label: string} | null;
+  budgetUndoCount: number;
+  getPeriodsWithBudgets: () => string[];
 }
 
 const FinanceContext = createContext<FinanceContextType | undefined>(undefined);
@@ -136,6 +141,10 @@ const App: React.FC = () => {
   const currentBatchRef = useRef<string[]>([]);
   const batchModeRef = useRef(false);
   const [undoCount, setUndoCount] = useState(0);
+
+  // Budget Undo System
+  const budgetUndoStackRef = useRef<{budgets: Budget[], label: string}[]>([]);
+  const [budgetUndoCount, setBudgetUndoCount] = useState(0);
 
   // CLAVES DE ALMACENAMIENTO LOCAL
   const getBackupKey = (userId: string) => `finanzas_pro_backup_${userId}`;
@@ -515,6 +524,12 @@ const App: React.FC = () => {
     forceResync,
     
     importBudgetFromMonth: (sourceDate, targetDate) => setState(prev => {
+      // Guardar snapshot para undo antes de importar
+      const currentPeriodBudgets = prev.budgets.filter(bg => bg.period === targetDate);
+      budgetUndoStackRef.current.push({ budgets: currentPeriodBudgets, label: `Importar de ${sourceDate}` });
+      if (budgetUndoStackRef.current.length > 20) budgetUndoStackRef.current.shift();
+      setBudgetUndoCount(budgetUndoStackRef.current.length);
+
       const sourceBudgets = prev.budgets.filter(b => b.period === sourceDate);
       const newBudgets = sourceBudgets.map(b => ({
         ...b,
@@ -526,29 +541,8 @@ const App: React.FC = () => {
       return { ...prev, budgets: [...filteredBudgets, ...newBudgets] };
     }),
     getEffectiveBudgets: (targetDate) => {
-      const allCategories = Array.from(new Set(state.budgets.map(b => b.category)));
-      return allCategories.map(cat => {
-        const exact = state.budgets.find(b => b.category === cat && b.period === targetDate);
-        if (exact) return exact;
-        if (targetDate.includes('-')) {
-          const [y, m] = targetDate.split('-').map(Number);
-          const lastYearPeriod = `${y - 1}-${String(m).padStart(2, '0')}`;
-          const lastYearMatch = state.budgets.find(b => b.category === cat && b.period === lastYearPeriod);
-          if (lastYearMatch) return { ...lastYearMatch, id: `inherited_${lastYearMatch.id}`, period: targetDate };
-        }
-        const previous = state.budgets
-          .filter(b => b.category === cat && (!b.period || b.period < targetDate))
-          .sort((a, b) => {
-            if (!a.period) return 1;
-            if (!b.period) return -1;
-            return b.period.localeCompare(a.period);
-          });
-        if (previous.length > 0) {
-          const best = previous[0];
-          return { ...best, id: `inherited_${best.id}`, period: targetDate };
-        }
-        return null;
-      }).filter((b): b is Budget => b !== null);
+      // Presupuestos 100% independientes por periodo - sin herencia
+      return state.budgets.filter(b => b.period === targetDate);
     },
 
     addTransaction: (t, myPart) => {
@@ -627,6 +621,12 @@ const App: React.FC = () => {
     },
     addBudget: (b) => setState(prev => {
       const period = b.period || prev.currentDate;
+      // Guardar snapshot para undo
+      const currentPeriodBudgets = prev.budgets.filter(bg => bg.period === period);
+      budgetUndoStackRef.current.push({ budgets: currentPeriodBudgets, label: `Añadir ${b.category}` });
+      if (budgetUndoStackRef.current.length > 20) budgetUndoStackRef.current.shift();
+      setBudgetUndoCount(budgetUndoStackRef.current.length);
+
       const existingIndex = prev.budgets.findIndex(bg => bg.category === b.category && bg.period === period);
       if (existingIndex >= 0) {
         const newBudgets = [...prev.budgets];
@@ -635,11 +635,27 @@ const App: React.FC = () => {
       }
       return { ...prev, budgets: [...prev.budgets, { ...b, id: 'budget_' + Date.now(), spent: 0, period } as Budget] };
     }),
-    updateBudget: (b) => setState(prev => ({ 
-      ...prev, 
-      budgets: prev.budgets.map(bg => bg.id === b.id ? { ...b, period: b.period || prev.currentDate } : bg) 
-    })),
-    deleteBudget: (id) => setState(prev => ({ ...prev, budgets: prev.budgets.filter(b => b.id !== id) })),
+    updateBudget: (b) => setState(prev => {
+      const period = b.period || prev.currentDate;
+      // Guardar snapshot para undo
+      const currentPeriodBudgets = prev.budgets.filter(bg => bg.period === period);
+      budgetUndoStackRef.current.push({ budgets: currentPeriodBudgets, label: `Editar ${b.category}` });
+      if (budgetUndoStackRef.current.length > 20) budgetUndoStackRef.current.shift();
+      setBudgetUndoCount(budgetUndoStackRef.current.length);
+
+      return { ...prev, budgets: prev.budgets.map(bg => bg.id === b.id ? { ...b, period: period } : bg) };
+    }),
+    deleteBudget: (id) => setState(prev => {
+      const target = prev.budgets.find(b => b.id === id);
+      if (target) {
+        const period = target.period || prev.currentDate;
+        const currentPeriodBudgets = prev.budgets.filter(bg => bg.period === period);
+        budgetUndoStackRef.current.push({ budgets: currentPeriodBudgets, label: `Eliminar ${target.category}` });
+        if (budgetUndoStackRef.current.length > 20) budgetUndoStackRef.current.shift();
+        setBudgetUndoCount(budgetUndoStackRef.current.length);
+      }
+      return { ...prev, budgets: prev.budgets.filter(b => b.id !== id) };
+    }),
     addExtraSaving: (e) => setState(prev => ({ ...prev, extraSavings: [...(prev.extraSavings || []), { ...e, id: 'extra_' + Date.now() } as ExtraSaving] })),
     deleteExtraSaving: (id) => setState(prev => ({ ...prev, extraSavings: (prev.extraSavings || []).filter(e => e.id !== id) })),
     updateManualContribution: (savingId, amount) => setState(prev => ({ ...prev, manualContributions: { ...(prev.manualContributions || {}), [savingId]: amount } })),
@@ -697,7 +713,27 @@ const App: React.FC = () => {
       return lastGroup;
     },
     undoCount,
-  }), [state, isGuest, isSyncing, syncError, undoCount, getAccountHistoricalBalance, getSavingHistoricalBalance, getNetWorthHistorical, loginAsGuest, retrySync, manualRefresh, saveData, forceResync, syncRefundsWithTransactions]);
+
+    // Budget undo
+    undoBudgetChange: () => {
+      const lastSnapshot = budgetUndoStackRef.current.pop();
+      setBudgetUndoCount(budgetUndoStackRef.current.length);
+      if (!lastSnapshot) return null;
+      setState(prev => {
+        // Determinar el periodo del snapshot
+        const period = lastSnapshot.budgets.length > 0 ? lastSnapshot.budgets[0].period : prev.currentDate;
+        // Eliminar TODOS los presupuestos del periodo actual y reemplazar con el snapshot
+        const otherBudgets = prev.budgets.filter(b => b.period !== period);
+        return { ...prev, budgets: [...otherBudgets, ...lastSnapshot.budgets] };
+      });
+      return { label: lastSnapshot.label };
+    },
+    budgetUndoCount,
+    getPeriodsWithBudgets: () => {
+      const periods: string[] = Array.from(new Set(state.budgets.filter(b => b.period).map(b => b.period as string)));
+      return periods.sort((a, b) => b.localeCompare(a));
+    },
+  }), [state, isGuest, isSyncing, syncError, undoCount, budgetUndoCount, getAccountHistoricalBalance, getSavingHistoricalBalance, getNetWorthHistorical, loginAsGuest, retrySync, manualRefresh, saveData, forceResync, syncRefundsWithTransactions]);
 
   if (isAppInitializing) { 
     return (
