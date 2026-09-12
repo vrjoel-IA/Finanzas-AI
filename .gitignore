@@ -25,3 +25,8 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Copias del proyecto y volcados de historial: han llegado a contener
+# claves de API en texto plano, no deben subirse nunca al repositorio.
+*.zip
+migrated_prompt_history/
