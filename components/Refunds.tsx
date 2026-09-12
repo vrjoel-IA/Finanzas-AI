@@ -18,6 +18,7 @@ import {
   ChevronDown
 } from 'lucide-react';
 import { Refund } from '../types';
+import { settleRefundManually } from '../services/refunds';
 
 const Refunds: React.FC = () => {
   const { budgets, refunds, addRefund, updateRefund, deleteRefund, mergeRefunds } = useFinance();
@@ -214,7 +215,7 @@ const Refunds: React.FC = () => {
               <div className="mt-4">
                 <button 
                   type="button"
-                  onClick={(e) => handleActionClick(e, () => updateRefund({ ...r, status: 'closed', pendingAmount: 0 }))}
+                  onClick={(e) => handleActionClick(e, () => updateRefund(settleRefundManually(r)))}
                   className="w-full flex items-center justify-center gap-2 p-3 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 rounded-2xl text-xs font-bold hover:bg-emerald-50 dark:hover:bg-emerald-900/40 hover:text-emerald-600 dark:hover:text-emerald-400 hover:border-emerald-200 dark:hover:border-emerald-800 transition-all active:scale-95"
                 >
                   <CheckCircle2 size={16} className="text-slate-300 dark:text-slate-600" />

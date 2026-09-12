@@ -33,6 +33,9 @@ export interface Refund {
   date: string;
   category: string;
   originTransactionId?: string;
+  // Cobrado a mano (efectivo, Bizum sin registrar). Protege pendingAmount del
+  // recalculo automatico, que si no lo devolveria a la deuda integra.
+  settledManually?: boolean;
 }
 
 export interface Transaction {

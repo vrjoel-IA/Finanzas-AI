@@ -12,6 +12,7 @@ import {
 import { FinanceState, Account, Saving, Refund, Transaction, Budget, AIChallenge, ExtraSaving, ChatMessage } from './types';
 import { INITIAL_DATA } from './constants';
 import { supabase } from './services/supabase';
+import { syncRefundsWithTransactions as syncRefunds } from './services/refunds';
 
 // Componentes de vistas
 import Dashboard from './components/Dashboard';
@@ -152,19 +153,11 @@ const App: React.FC = () => {
   const getDirtyKey = (userId: string) => `finanzas_pro_dirty_${userId}`;
 
   // Función auxiliar robusta para sincronizar deudas con transacciones
-  const syncRefundsWithTransactions = useCallback((txs: Transaction[], existingRefunds: Refund[]) => {
-    return existingRefunds.map(r => {
-      const incomesForThisRefund = txs.filter(t => t.type === 'income' && t.refundId === r.id);
-      const totalRecovered = incomesForThisRefund.reduce((sum, t) => sum + Number(t.amount || 0), 0);
-      const initialDebtAmount = Number(r.totalAmount || 0) - Number(r.paidByMe || 0);
-      const newPending = Math.max(0, initialDebtAmount - totalRecovered);
-      return { 
-        ...r, 
-        pendingAmount: newPending, 
-        status: (newPending <= 0.01) ? 'closed' : r.status 
-      } as Refund;
-    });
-  }, []);
+  // Implementacion en services/refunds.ts: es pura y esta cubierta por tests.
+  const syncRefundsWithTransactions = useCallback(
+    (txs: Transaction[], existingRefunds: Refund[]) => syncRefunds(txs, existingRefunds),
+    [],
+  );
 
   useEffect(() => {
     stateRef.current = state;
