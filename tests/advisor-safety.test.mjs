@@ -21,13 +21,15 @@ function load(relativePath, modules = {}) {
   }, console, Date, Set }, { filename: relativePath });
   return exports;
 }
-const actions = load('../components/advisorActions.ts');
+const refundsModule = load('../services/refunds.ts');
+const actions = load('../components/advisorActions.ts', { '../services/refunds': refundsModule });
 const AdvisorText = load('../components/AdvisorText.tsx', { react: React }).default;
+const advisorContext = load('../components/advisorContext.ts');
 const fixture = () => ({
   accounts: [{ id: 'a1', name: 'Banco', type: 'Bank', initialBalance: 500, currentBalance: 500, color: 'blue' }],
   budgets: [{ id: 'b1', category: 'Ocio', limit: 100, period: '2026-09', type: 'expense', color: 'blue', icon: 'x', spent: 20 }],
   transactions: [{ id: 't1', amount: 20, type: 'expense', accountId: 'a1', date: '2026-09-01', category: 'Ocio', description: 'Existente', isRefund: false }],
-  refunds: [], currentDate: '2026-09',
+  refunds: [], challenges: [], savings: [], currentDate: '2026-09', viewMode: 'month',
 });
 const updateCall = { name: 'updateExistingBudgetLimit', args: { categoryName: 'Ocio', newLimit: 150 } };
 const transactionCall = { name: 'recordNewTransaction', args: { description: 'Nuevo', amount: 12, category: 'Ocio', type: 'expense', accountName: 'Banco' } };
@@ -74,9 +76,9 @@ test('duplicate, ambiguous, legacy and invalid proposals are rejected without ch
     assert.throws(() => prepare({ ...updateCall, args: { ...updateCall.args, newLimit } }, state), /importe/);
   }
   assert.throws(() => prepare(updateCall, { ...state, currentDate: '2026' }), /mes/);
-  assert.throws(() => prepare(updateCall, { ...state, budgets: [{ ...state.budgets[0], period: undefined }] }), /único/);
-  assert.throws(() => prepare(updateCall, { ...state, budgets: [...state.budgets, { ...state.budgets[0], id: 'b2' }] }), /único/);
-  assert.throws(() => prepare(transactionCall, { ...state, accounts: [...state.accounts, { ...state.accounts[0], id: 'a2' }] }), /única/);
+  assert.throws(() => prepare(updateCall, { ...state, budgets: [{ ...state.budgets[0], period: undefined }] }), /propio de este mes/);
+  assert.throws(() => prepare(updateCall, { ...state, budgets: [...state.budgets, { ...state.budgets[0], id: 'b2' }] }), /inequívoca/);
+  assert.throws(() => prepare(transactionCall, { ...state, accounts: [...state.accounts, { ...state.accounts[0], id: 'a2' }] }), /inequívoca/);
   assert.equal(JSON.stringify(state), before);
 });
 
@@ -102,6 +104,20 @@ function harness(response) {
   const state = { ...fixture(), chatHistory: [{ role: 'ai', text: 'Historial existente' }],
     chatLastDate: new Date().toISOString().split('T')[0], theme: 'light',
     getAccountHistoricalBalance: () => 480,
+    getSavingHistoricalBalance: () => 0,
+    getNetWorthHistorical: () => 480,
+    setPeriod: () => {}, setViewMode: () => {}, toggleTheme: () => {},
+    deleteBudget: id => writes.push(['deleteBudget', id]),
+    importBudgetFromMonth: (f, t) => writes.push(['importBudget', [f, t]]),
+    updateTransaction: v => writes.push(['updateTransaction', v]),
+    deleteTransaction: id => writes.push(['deleteTransaction', id]),
+    addSaving: v => writes.push(['createSaving', v]),
+    updateSaving: v => writes.push(['updateSaving', v]),
+    deleteSaving: id => writes.push(['deleteSaving', id]),
+    addAccount: v => writes.push(['createAccount', v]),
+    updateAccount: v => writes.push(['updateAccount', v]),
+    addRefund: v => writes.push(['createRefund', v]),
+    updateRefund: v => writes.push(['settleRefund', v]),
     updateChatHistory: value => writes.push(['chat', value]),
     addBudget: value => writes.push(['createBudget', value]),
     updateBudget: value => writes.push(['updateBudget', value]),
@@ -131,6 +147,7 @@ function harness(response) {
     'lucide-react': new Proxy({}, { get: () => () => null }),
     '../services/geminiService': { getFinancialAdviceWithTools: async () => typeof response === 'function' ? response() : response },
     './AdvisorText': { default: AdvisorText, __esModule: true }, './advisorActions': actions,
+    './advisorContext': advisorContext,
   }).default;
   let tree;
   function render() {

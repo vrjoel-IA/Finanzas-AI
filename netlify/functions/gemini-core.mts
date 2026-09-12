@@ -85,43 +85,194 @@ const challengeSchema = {
 
 const functionDeclarations: FunctionDeclaration[] = [
   {
-    name: 'createBudgetCategory',
-    description: 'Crea una nueva categoría de presupuesto.',
+    name: 'goToPeriod',
+    description: 'Navega a un mes concreto de la aplicacion.',
     parameters: {
       type: Type.OBJECT,
       properties: {
-        categoryName: { type: Type.STRING },
-        limit: { type: Type.NUMBER },
-        type: { type: Type.STRING, enum: ['income', 'expense'] },
+        month: { type: Type.STRING, description: 'Mes en formato AAAA-MM' },
+      },
+      required: ['month'],
+    },
+  },
+  {
+    name: 'setViewMode',
+    description: 'Cambia entre la vista mensual y la anual.',
+    parameters: {
+      type: Type.OBJECT,
+      properties: {
+        mode: { type: Type.STRING, description: 'month o year' },
+      },
+      required: ['mode'],
+    },
+  },
+  {
+    name: 'toggleTheme',
+    description: 'Alterna entre tema claro y oscuro.',
+    parameters: {
+      type: Type.OBJECT,
+      properties: {
+      },
+      required: [],
+    },
+  },
+  {
+    name: 'createBudgetCategory',
+    description: 'Crea una nueva categoria de presupuesto en el mes seleccionado.',
+    parameters: {
+      type: Type.OBJECT,
+      properties: {
+        categoryName: { type: Type.STRING, description: 'Nombre de la categoria' },
+        limit: { type: Type.NUMBER, description: 'Limite en euros' },
+        type: { type: Type.STRING, description: 'income o expense' },
       },
       required: ['categoryName', 'limit', 'type'],
     },
   },
   {
     name: 'updateExistingBudgetLimit',
-    description: 'Actualiza el límite de una categoría existente.',
+    description: 'Cambia el limite de una categoria de presupuesto existente.',
     parameters: {
       type: Type.OBJECT,
       properties: {
-        categoryName: { type: Type.STRING },
-        newLimit: { type: Type.NUMBER },
+        categoryName: { type: Type.STRING, description: 'Categoria existente' },
+        newLimit: { type: Type.NUMBER, description: 'Nuevo limite en euros' },
       },
       required: ['categoryName', 'newLimit'],
     },
   },
   {
-    name: 'recordNewTransaction',
-    description: 'Registra un nuevo ingreso o gasto manual.',
+    name: 'deleteBudgetCategory',
+    description: 'Borra una categoria de presupuesto del mes seleccionado. No borra transacciones.',
     parameters: {
       type: Type.OBJECT,
       properties: {
-        description: { type: Type.STRING },
-        amount: { type: Type.NUMBER },
-        category: { type: Type.STRING },
-        type: { type: Type.STRING, enum: ['income', 'expense'] },
-        accountName: { type: Type.STRING },
+        categoryName: { type: Type.STRING, description: 'Categoria a borrar' },
+      },
+      required: ['categoryName'],
+    },
+  },
+  {
+    name: 'importBudgetsFromMonth',
+    description: 'Copia los presupuestos de otro mes al mes seleccionado.',
+    parameters: {
+      type: Type.OBJECT,
+      properties: {
+        sourceMonth: { type: Type.STRING, description: 'Mes de origen en formato AAAA-MM' },
+      },
+      required: ['sourceMonth'],
+    },
+  },
+  {
+    name: 'recordNewTransaction',
+    description: 'Registra un ingreso o gasto nuevo.',
+    parameters: {
+      type: Type.OBJECT,
+      properties: {
+        description: { type: Type.STRING, description: 'Concepto' },
+        amount: { type: Type.NUMBER, description: 'Importe positivo en euros' },
+        category: { type: Type.STRING, description: 'Categoria' },
+        type: { type: Type.STRING, description: 'income o expense' },
+        accountName: { type: Type.STRING, description: 'Nombre exacto de la cuenta' },
+        date: { type: Type.STRING, description: 'Fecha AAAA-MM-DD; si se omite se usa hoy' },
       },
       required: ['description', 'amount', 'category', 'type', 'accountName'],
+    },
+  },
+  {
+    name: 'updateExistingTransaction',
+    description: 'Cambia el importe o la categoria de una transaccion existente, identificada por su descripcion exacta.',
+    parameters: {
+      type: Type.OBJECT,
+      properties: {
+        description: { type: Type.STRING, description: 'Descripcion exacta de la transaccion' },
+        newAmount: { type: Type.NUMBER, description: 'Nuevo importe' },
+        newCategory: { type: Type.STRING, description: 'Nueva categoria' },
+      },
+      required: ['description'],
+    },
+  },
+  {
+    name: 'deleteExistingTransaction',
+    description: 'Borra una transaccion existente, identificada por su descripcion exacta.',
+    parameters: {
+      type: Type.OBJECT,
+      properties: {
+        description: { type: Type.STRING, description: 'Descripcion exacta de la transaccion' },
+      },
+      required: ['description'],
+    },
+  },
+  {
+    name: 'createSavingsGoal',
+    description: 'Crea una hucha nueva con saldo inicial cero.',
+    parameters: {
+      type: Type.OBJECT,
+      properties: {
+        name: { type: Type.STRING, description: 'Nombre de la hucha' },
+        targetAmount: { type: Type.NUMBER, description: 'Objetivo en euros, opcional' },
+        isInvestment: { type: Type.BOOLEAN, description: 'true si es una inversion' },
+      },
+      required: ['name'],
+    },
+  },
+  {
+    name: 'updateSavingsGoal',
+    description: 'Cambia el objetivo de una hucha. No toca el saldo acumulado.',
+    parameters: {
+      type: Type.OBJECT,
+      properties: {
+        name: { type: Type.STRING, description: 'Nombre de la hucha' },
+        newTargetAmount: { type: Type.NUMBER, description: 'Nuevo objetivo en euros' },
+      },
+      required: ['name', 'newTargetAmount'],
+    },
+  },
+  {
+    name: 'deleteSavingsGoal',
+    description: 'Borra una hucha que no tenga transacciones ligadas.',
+    parameters: {
+      type: Type.OBJECT,
+      properties: {
+        name: { type: Type.STRING, description: 'Nombre de la hucha' },
+      },
+      required: ['name'],
+    },
+  },
+  {
+    name: 'createAccount',
+    description: 'Crea una cuenta nueva.',
+    parameters: {
+      type: Type.OBJECT,
+      properties: {
+        name: { type: Type.STRING, description: 'Nombre de la cuenta' },
+        type: { type: Type.STRING, description: 'Bank, Cash o Card' },
+        initialBalance: { type: Type.NUMBER, description: 'Saldo inicial en euros' },
+      },
+      required: ['name', 'type', 'initialBalance'],
+    },
+  },
+  {
+    name: 'renameAccount',
+    description: 'Renombra una cuenta existente sin tocar su saldo ni sus transacciones.',
+    parameters: {
+      type: Type.OBJECT,
+      properties: {
+        currentName: { type: Type.STRING, description: 'Nombre actual' },
+        newName: { type: Type.STRING, description: 'Nombre nuevo' },
+      },
+      required: ['currentName', 'newName'],
+    },
+  },
+  {
+    name: 'markRefundAsSettled',
+    description: 'Cierra un reembolso abierto dandolo por cobrado. No crea ninguna transaccion ni modifica saldos.',
+    parameters: {
+      type: Type.OBJECT,
+      properties: {
+        name: { type: Type.STRING, description: 'Nombre del reembolso' },
+      },
+      required: ['name'],
     },
   },
 ];
@@ -145,10 +296,39 @@ const RECEIPT_PROMPT = `Analiza esta captura de pantalla de movimientos bancario
           8. isRefund: true si es un ingreso tipo Bizum de deuda.
           9. suggestedAccount: El nombre identificado según las reglas visuales anteriores ("Banco Principal" o "REVOLUT").`;
 
-const ADVISOR_SYSTEM_INSTRUCTION = `Eres "Aura", una Asesora Financiera de Élite.
-      Fusionas la alta gestión corporativa con las finanzas personales.
-      Metodologías: Base Cero, Regla del 1/3, Método Kakebo.
-      Responde siempre de forma estratégica y rigurosa.`;
+const ADVISOR_SYSTEM_INSTRUCTION = `Eres "Aura", la asistente financiera personal del usuario dentro de su propia aplicación de finanzas.
+
+QUIÉN ERES
+Fusionas la alta gestión corporativa con las finanzas personales. Conoces las metodologías
+de Presupuesto Base Cero, la Regla del Tercio y el Método Kakebo. Hablas en español, de tú,
+de forma directa y concreta. Nada de respuestas genéricas: el usuario te da sus datos reales
+y espera respuestas sobre SUS números.
+
+QUÉ VES
+En cada mensaje recibes una foto completa de su situación: cuentas y saldos, huchas,
+presupuestos del periodo con lo gastado, movimientos del periodo, reembolsos pendientes,
+retos activos y la evolución de los últimos meses. Úsala. Cita cifras concretas.
+Si algo no está en esa foto, dilo en vez de inventarlo.
+
+QUÉ PUEDES HACER
+Tienes herramientas para navegar por la app y para modificar los datos del usuario.
+Úsalas cuando el usuario pida un cambio, no describas por escrito lo que podrías hacer.
+
+Reglas al usarlas:
+- Nunca ejecutas cambios directamente. Toda herramienta que modifica datos se convierte en
+  una propuesta que el usuario debe confirmar con un botón. Así que propón con naturalidad,
+  pero no afirmes que algo "ya está hecho": di que lo has propuesto y que lo confirme.
+- Identifica cuentas, categorías, huchas y reembolsos por su nombre EXACTO tal y como
+  aparece en el contexto. Si hay ambigüedad, pregunta en lugar de adivinar.
+- Propón una sola acción por respuesta salvo que el usuario pida varias explícitamente.
+  Al confirmar una propuesta las demás se descartan.
+- Para borrar algo, asegúrate primero de que es lo que el usuario quiere.
+- No registres transacciones que el usuario no haya pedido. Su historial es real y lo
+  concilia con su banco.
+
+LÍMITES
+Vives dentro de la aplicación. No puedes mover dinero real, ni contactar con bancos, ni
+pagar nada. Si te piden algo así, dilo con claridad y ofrece lo que sí puedes hacer.`;
 
 type Payload = Record<string, unknown>;
 

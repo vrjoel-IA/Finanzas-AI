@@ -5,11 +5,28 @@ import { Send, Bot, User, Sparkles, Loader2, RefreshCcw, CheckCircle2, TrendingU
 import { getFinancialAdviceWithTools } from '../services/geminiService';
 import { ChatMessage } from '../types';
 import AdvisorText from './AdvisorText';
-import { AdvisorProposal, prepareAdvisorProposal, applyAdvisorProposal } from './advisorActions';
+import { AdvisorProposal, prepareAdvisorProposal, applyAdvisorProposal, needsConfirmation } from './advisorActions';
+import { buildAdvisorContext } from './advisorContext';
 
 const AIAdvisor: React.FC = () => {
   const financeState = useFinance();
-  const { budgets, updateBudget, addTransaction, addBudget, accounts, transactions, theme, currentDate, chatHistory, chatLastDate, updateChatHistory } = financeState;
+  const {
+    transactions, currentDate, chatHistory, chatLastDate, updateChatHistory,
+    setPeriod, setViewMode, toggleTheme,
+    addBudget, updateBudget, deleteBudget, importBudgetFromMonth,
+    addTransaction, updateTransaction, deleteTransaction,
+    addSaving, updateSaving, deleteSaving,
+    addAccount, updateAccount, addRefund, updateRefund,
+  } = financeState;
+
+  // Todo lo que Aura puede llegar a ejecutar, en un solo sitio.
+  const advisorCallbacks = {
+    setPeriod, setViewMode, toggleTheme,
+    addBudget, updateBudget, deleteBudget, importBudgetFromMonth,
+    addTransaction, updateTransaction, deleteTransaction,
+    addSaving, updateSaving, deleteSaving,
+    addAccount, updateAccount, addRefund, updateRefund,
+  };
   
   const welcomeMessage: ChatMessage = { 
     role: 'ai', 
@@ -39,7 +56,7 @@ const AIAdvisor: React.FC = () => {
     // Consume the whole response before calling a setter, including rapid repeated clicks.
     discardProposals();
     try {
-      applyAdvisorProposal(proposal, financeState, { addBudget, updateBudget, addTransaction });
+      applyAdvisorProposal(proposal, financeState, advisorCallbacks);
       setActionNotice(`Cambio confirmado: ${proposal.summary} Las demás propuestas de esta respuesta se han descartado.`);
     } catch (error) {
       setActionNotice(error instanceof Error ? error.message : 'No se ha podido aplicar la propuesta.');
@@ -67,26 +84,21 @@ const AIAdvisor: React.FC = () => {
     }
   }, [messages]);
 
-  const historicalContext = useMemo(() => {
-    const categories: Record<string, { total: number, count: number }> = {};
-    const monthlyBalances: Record<string, number> = {};
-
-    transactions.forEach(t => {
-      const month = t.date.substring(0, 7);
-      if (t.type === 'expense') {
-        if (!categories[t.category]) categories[t.category] = { total: 0, count: 0 };
-        categories[t.category].total += t.amount;
-        categories[t.category].count += 1;
-      }
-      monthlyBalances[month] = (monthlyBalances[month] || 0) + (t.type === 'income' ? t.amount : -t.amount);
-    });
-
-    const averages = Object.keys(categories).map(cat => 
-        `${cat}: Media de ${(categories[cat].total / Math.max(1, Object.keys(monthlyBalances).length)).toFixed(2)}€/mes`
-    ).join(', ');
-
-    return `Resumen Histórico Anual: Promedios por Categoría: ${averages}. Saldos Mensuales Pasados: ${Object.entries(monthlyBalances).map(([m, b]) => `${m}: ${b}€`).join(' | ')}`;
-  }, [transactions]);
+  // Foto financiera completa. Antes Aura solo veia saldos y limites, asi que no
+  // podia responder sobre gastos concretos, huchas ni reembolsos.
+  const advisorContext = useMemo(() => buildAdvisorContext({
+    accounts: financeState.accounts,
+    savings: financeState.savings,
+    budgets: financeState.budgets,
+    transactions: financeState.transactions,
+    refunds: financeState.refunds,
+    challenges: financeState.challenges,
+    currentDate: financeState.currentDate,
+    viewMode: financeState.viewMode,
+    accountBalance: financeState.getAccountHistoricalBalance,
+    savingBalance: financeState.getSavingHistoricalBalance,
+    netWorth: financeState.getNetWorthHistorical,
+  }), [financeState]);
 
   const handleSend = async () => {
     if (!input.trim() || isLoading || requestInProgress.current || proposals.length) return;
@@ -101,21 +113,12 @@ const AIAdvisor: React.FC = () => {
     setIsLoading(true);
 
     try {
-      const budgetsInfo = budgets.map(b => {
-        const calculatedSpent = transactions.filter(t => t.date.startsWith(currentDate) && t.category === b.category).reduce((sum, t) => {
-            if (b.type === 'expense') {
-              if (t.type === 'expense') return sum + t.amount;
-              if (t.type === 'income' && t.refundId) return sum - t.amount;
-            }
-            if (b.type === 'income' && t.type === 'income') return sum + t.amount;
-            return sum;
-          }, 0);
-        return `${b.category} (${b.type}): ${calculatedSpent}/${b.limit}€`;
-      }).join(', ');
+      // El historial hace que Aura pueda conversar: antes cada mensaje viajaba solo.
+      const history = newHistory
+        .filter(m => m.role === 'ai' || m.role === 'user')
+        .map(m => ({ role: m.role, text: m.text }));
 
-      const context = `${historicalContext}. Estado Actual (${financeState.currentDate}): Cuentas: ${accounts.map(a => `${a.name} (${financeState.getAccountHistoricalBalance(a.id, currentDate)}€)`).join(', ')}. Presupuestos Actuales: ${budgetsInfo}`;
-
-      const response = await getFinancialAdviceWithTools(context, userMsg);
+      const response = await getFinancialAdviceWithTools(advisorContext, userMsg, history);
       if (version !== requestVersion.current) return;
       let updatedList = [...newHistory];
       let systemFeedbacks: string[] = [];
@@ -124,14 +127,21 @@ const AIAdvisor: React.FC = () => {
       if (response.functionCalls) {
         for (const fc of response.functionCalls) {
           try {
-            pending.push(prepareAdvisorProposal(fc.name || '', fc.args, financeState, ++nextProposalId.current, new Date().toISOString().split('T')[0]));
+            const proposal = prepareAdvisorProposal(fc.name || '', fc.args, financeState, ++nextProposalId.current, new Date().toISOString().split('T')[0]);
+            // La navegacion no toca datos y es reversible: pedir confirmacion seria un estorbo.
+            if (!needsConfirmation(proposal)) {
+              applyAdvisorProposal(proposal, financeState, advisorCallbacks);
+              systemFeedbacks.push(proposal.summary);
+            } else {
+              pending.push(proposal);
+            }
           } catch (error) {
             systemFeedbacks.push(`Propuesta no aplicada: ${error instanceof Error ? error.message : 'Datos no válidos.'}`);
           }
         }
       }
       setProposals(pending);
-      if (pending.length) systemFeedbacks.push('Hay propuestas pendientes de confirmación. No se ha aplicado ninguna acción financiera.');
+      if (pending.length) systemFeedbacks.push('Hay propuestas pendientes de confirmación. No se ha modificado ningún dato.');
 
       if (systemFeedbacks.length > 0) {
         const sysMsg: ChatMessage = { role: 'system', text: systemFeedbacks.join('\n') };
@@ -182,16 +192,34 @@ const AIAdvisor: React.FC = () => {
           {proposals.length > 0 && (
             <section aria-label="Propuestas de Aura" className="space-y-4 rounded-2xl border border-amber-300 dark:border-amber-700 p-5">
               <p className="font-bold">Revisa antes de confirmar</p>
-              <p className="text-sm">No se ha aplicado ningún cambio. Confirma una propuesta o descártala para continuar. Al confirmar una, se descartan las demás.</p>
-              {proposals.map(proposal => (
-                <div key={proposal.id} className="space-y-3 border-t border-amber-200 dark:border-amber-800 pt-4">
-                  <p className="text-sm whitespace-pre-wrap">{proposal.summary}</p>
-                  <div className="flex flex-wrap gap-3">
-                    <button type="button" onClick={() => confirmProposal(proposal)} className="rounded-xl bg-blue-600 text-white px-4 py-3 font-bold">Confirmar este cambio</button>
-                    <button type="button" onClick={() => { consumedProposals.current.add(proposal.id); setProposals(prev => prev.filter(p => p.id !== proposal.id)); }} className="rounded-xl border border-slate-300 px-4 py-3 font-bold">Descartar</button>
+              <p className="text-sm">No se ha modificado ningún dato. Confirma una propuesta o descártala para continuar. Al confirmar una, se descartan las demás.</p>
+              {proposals.map(proposal => {
+                const isDestructive = proposal.tier === 'destructive';
+                return (
+                  <div key={proposal.id} className={`space-y-3 border-t pt-4 ${isDestructive ? 'border-red-300 dark:border-red-800' : 'border-amber-200 dark:border-amber-800'}`}>
+                    {isDestructive && (
+                      <p className="text-xs font-black uppercase tracking-[0.2em] text-red-600 dark:text-red-400">Acción destructiva</p>
+                    )}
+                    <p className="text-sm whitespace-pre-wrap">{proposal.summary}</p>
+                    <div className="flex flex-wrap gap-3">
+                      <button
+                        type="button"
+                        onClick={() => confirmProposal(proposal)}
+                        className={`rounded-xl px-4 py-3 font-bold text-white ${isDestructive ? 'bg-red-600 hover:bg-red-700' : 'bg-blue-600 hover:bg-blue-700'}`}
+                      >
+                        {isDestructive ? 'Sí, borrar definitivamente' : 'Confirmar este cambio'}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => { consumedProposals.current.add(proposal.id); setProposals(prev => prev.filter(p => p.id !== proposal.id)); }}
+                        className="rounded-xl border border-slate-300 px-4 py-3 font-bold"
+                      >
+                        Descartar
+                      </button>
+                    </div>
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </section>
           )}
           {actionNotice && <p role="status" className="rounded-2xl border border-slate-300 p-4 text-sm">{actionNotice}</p>}
