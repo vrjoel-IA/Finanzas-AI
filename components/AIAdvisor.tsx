@@ -147,6 +147,9 @@ const AIAdvisor: React.FC = () => {
         const sysMsg: ChatMessage = { role: 'system', text: systemFeedbacks.join('\n') };
         updatedList.push(sysMsg);
       }
+      // Cuando Gemini devuelve una llamada a herramienta suprime el texto, asi que
+      // aqui no suele haber nada que mostrar: la explicacion vive en el resumen de
+      // la propuesta, que describe exactamente lo que va a pasar.
       if (response.text) {
         const aiMsg: ChatMessage = { role: 'ai', text: response.text || '' };
         updatedList.push(aiMsg);

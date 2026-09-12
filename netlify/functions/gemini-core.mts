@@ -12,6 +12,15 @@ const env = (...names: string[]) => {
   return '';
 };
 
+// Modelos, en un solo sitio. Los identificadores terminados en "-preview" los
+// retira Google sin aviso: el modelo pro que usaba el chat desaparecio y lo dejo
+// caido devolviendo 404. Por eso el chat y los retos usan un modelo estable.
+export const MODEL_CHAT = 'gemini-3.8-flash';
+export const MODEL_CHALLENGES = 'gemini-3.8-flash';
+// El escaner de tickets sigue en este porque funciona bien con el prompt actual.
+// Es "-preview": cuando lo retiren habra que cambiarlo y revalidar la extraccion.
+export const MODEL_RECEIPTS = 'gemini-3-flash-preview';
+
 const MAX_IMAGE_CHARS = 8_000_000;   // ~6 MB de imagen en base64
 const MAX_CONTEXT_CHARS = 120_000;
 const MAX_MESSAGE_CHARS = 4_000;
@@ -83,7 +92,7 @@ const challengeSchema = {
   },
 };
 
-const functionDeclarations: FunctionDeclaration[] = [
+export const functionDeclarations: FunctionDeclaration[] = [
   {
     name: 'goToPeriod',
     description: 'Navega a un mes concreto de la aplicacion.',
@@ -296,7 +305,7 @@ const RECEIPT_PROMPT = `Analiza esta captura de pantalla de movimientos bancario
           8. isRefund: true si es un ingreso tipo Bizum de deuda.
           9. suggestedAccount: El nombre identificado según las reglas visuales anteriores ("Banco Principal" o "REVOLUT").`;
 
-const ADVISOR_SYSTEM_INSTRUCTION = `Eres "Aura", la asistente financiera personal del usuario dentro de su propia aplicación de finanzas.
+export const ADVISOR_SYSTEM_INSTRUCTION = `Eres "Aura", la asistente financiera personal del usuario dentro de su propia aplicación de finanzas.
 
 QUIÉN ERES
 Fusionas la alta gestión corporativa con las finanzas personales. Conoces las metodologías
@@ -338,7 +347,7 @@ const actions: Record<string, (ai: GoogleGenAI, payload: Payload) => Promise<unk
   async analyzeReceipt(ai, payload) {
     const image = readString(payload.image, MAX_IMAGE_CHARS, 'image');
     const response = await ai.models.generateContent({
-      model: 'gemini-3-flash-preview',
+      model: MODEL_RECEIPTS,
       contents: { parts: [{ inlineData: { mimeType: 'image/jpeg', data: image } }, { text: RECEIPT_PROMPT }] },
       config: { responseMimeType: 'application/json', responseSchema: receiptSchema },
     });
@@ -348,7 +357,7 @@ const actions: Record<string, (ai: GoogleGenAI, payload: Payload) => Promise<unk
   async generateChallenges(ai, payload) {
     const context = readString(payload.context, MAX_CONTEXT_CHARS, 'context');
     const response = await ai.models.generateContent({
-      model: 'gemini-3-pro-preview',
+      model: MODEL_CHALLENGES,
       contents: `Actúa como Aura, asesora financiera experta. Basándote en el siguiente contexto financiero del usuario, genera 3 retos (AIChallenge) realistas y motivadores: ${context}`,
       config: { responseMimeType: 'application/json', responseSchema: challengeSchema },
     });
@@ -369,7 +378,7 @@ const actions: Record<string, (ai: GoogleGenAI, payload: Payload) => Promise<unk
       return [{ role: role === 'ai' ? 'model' : 'user', parts: [{ text: text.slice(0, MAX_MESSAGE_CHARS) }] }];
     });
     const response = await ai.models.generateContent({
-      model: 'gemini-3-pro-preview',
+      model: MODEL_CHAT,
       contents: [...history, { role: 'user', parts: [{ text: `CONTEXTO FINANCIERO HISTÓRICO Y ACTUAL:\n${context}\n\nMENSAJE DEL USUARIO: ${message}` }] }],
       config: { systemInstruction: ADVISOR_SYSTEM_INSTRUCTION, tools: [{ functionDeclarations }] },
     });
@@ -404,9 +413,11 @@ export async function handleGeminiRequest(request: Request): Promise<Response> {
   } catch (error) {
     // El detalle podría incluir datos de la petición a Gemini: se registra, no se devuelve.
     console.error('[gemini proxy]', error);
-    const message = error instanceof Error && /campo|tamaño|configuración/.test(error.message)
-      ? error.message
-      : 'No se ha podido completar la consulta con Gemini.';
+    const raw = error instanceof Error ? error.message : '';
+    const message = /campo|tamaño|configuración/.test(raw) ? raw
+      : /NOT_FOUND|no longer available/i.test(raw)
+        ? 'El modelo de IA configurado ya no está disponible. Hay que actualizarlo en el servidor.'
+        : 'No se ha podido completar la consulta con Gemini.';
     return fail(502, message);
   }
 }
