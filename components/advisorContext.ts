@@ -7,7 +7,6 @@ import type { Account, AIChallenge, Budget, Refund, Saving, Transaction } from '
 export interface AdvisorContextInput {
   accounts: Account[];
   savings: Saving[];
-  /** Presupuestos YA resueltos para currentDate (propios + heredados). */
   budgets: Budget[];
   transactions: Transaction[];
   refunds: Refund[];
@@ -53,10 +52,8 @@ export function buildAdvisorContext(input: AdvisorContextInput): string {
     spentByCategory.set(key, (spentByCategory.get(key) || 0) + Number(t.amount || 0));
   }
 
-  // Llegan ya resueltos desde el contexto de la app, con la misma herencia que
-  // ve el usuario en pantalla. Filtrar aqui por periodo dejaria a Aura dando
-  // cifras que no coinciden con lo que el usuario esta mirando.
   const presupuestos = input.budgets
+    .filter(b => !b.period || b.period === currentDate)
     .map(b => {
       const spent = spentByCategory.get(`${b.category}|${b.type}`) || 0;
       const label = b.type === 'income' ? 'ingresado' : 'gastado';
@@ -64,7 +61,7 @@ export function buildAdvisorContext(input: AdvisorContextInput): string {
     });
 
   // Categorias con movimiento pero sin presupuesto: suelen ser el punto ciego.
-  const presupuestadas = new Set(input.budgets.map(b => `${b.category}|${b.type}`));
+  const presupuestadas = new Set(input.budgets.filter(b => !b.period || b.period === currentDate).map(b => `${b.category}|${b.type}`));
   const sinPresupuesto = [...spentByCategory.entries()]
     .filter(([key]) => !presupuestadas.has(key))
     .map(([key, value]) => `- ${key.split('|')[0]} (${key.split('|')[1] === 'income' ? 'ingresos' : 'gastos'}): ${money(value)} sin presupuesto asignado`);

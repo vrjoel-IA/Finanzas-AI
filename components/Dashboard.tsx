@@ -19,12 +19,7 @@ import {
   ShoppingBag,
   AlertCircle,
   History,
-  X,
-  PieChart as PieChartIcon,
-  ArrowUpRight,
-  ArrowDownRight,
-  Minus,
-  SlidersHorizontal
+  X
 } from 'lucide-react';
 import { 
   AreaChart, 
@@ -33,20 +28,11 @@ import {
   YAxis, 
   CartesianGrid, 
   Tooltip, 
-  ResponsiveContainer,
-  PieChart,
-  Pie,
-  Cell,
-  LineChart,
-  Line,
-  Legend
+  ResponsiveContainer 
 } from 'recharts';
 import { generateAIChallenges } from '../services/geminiService';
 import { Budget, Transaction } from '../types';
-import { ICON_MAP, CATEGORIES, INCOME_CATEGORIES, BUDGET_PRESET_COLORS } from '../constants';
-import { aggregatePeriod, monthSeries, topExpenseCategories, categorySpent } from '../services/periodIndex';
-import { previousPeriod, isMonthKey, monthRange, sameMonthPreviousYear } from '../services/periods';
-import { mergeLayout } from '../services/dashboardBlocks';
+import { ICON_MAP } from '../constants';
 
 const Dashboard: React.FC = () => {
   const { 
@@ -62,7 +48,6 @@ const Dashboard: React.FC = () => {
     getAccountHistoricalBalance,
     getSavingHistoricalBalance,
     getNetWorthHistorical, 
-    viewIndex,
     viewMode,
     theme
   } = useFinance();
@@ -73,12 +58,7 @@ const Dashboard: React.FC = () => {
   const [showBreakdown, setShowBreakdown] = useState(false);
   const [isGeneratingChallenges, setIsGeneratingChallenges] = useState(false);
   const [selectedBudgetForDetails, setSelectedBudgetForDetails] = useState<Budget | null>(null); 
-  const [isBudgetsExpanded, setIsBudgetsExpanded] = useState(false);
-  const [budgetTab, setBudgetTab] = useState<'expense' | 'income'>('expense');
-  const [trendMetric, setTrendMetric] = useState<'flow' | 'savings' | 'category'>('flow');
-  const [trendRange, setTrendRange] = useState<6 | 12 | 24>(12);
-  const [trendCategories, setTrendCategories] = useState<string[]>([]);
-  const [compareLastYear, setCompareLastYear] = useState(false); 
+  const [isBudgetsExpanded, setIsBudgetsExpanded] = useState(false); 
 
   const budgets = useMemo(() => getEffectiveBudgets(currentDate), [getEffectiveBudgets, currentDate]);
 
@@ -206,132 +186,36 @@ const Dashboard: React.FC = () => {
   };
 
   const moveBlock = (index: number, direction: 'up' | 'down') => {
-    const newLayout = [...layout];
+    const newLayout = [...dashboardLayout];
     const targetIndex = direction === 'up' ? index - 1 : index + 1;
     if (targetIndex < 0 || targetIndex >= newLayout.length) return;
     [newLayout[index], newLayout[targetIndex]] = [newLayout[targetIndex], newLayout[index]];
     updateLayout(newLayout);
   };
 
-  // Gasto por categoria desde el indice compartido. Antes este calculo estaba
-  // triplicado en este mismo fichero con exclusiones distintas en cada copia,
-  // asi que el anillo, los retos y el widget podian no cuadrar entre si.
   const budgetsWithCalculatedSpent = useMemo(() => {
-    const agg = aggregatePeriod(viewIndex, currentDate);
     return budgets.map(b => {
-      const type = (b.type || 'expense') as 'income' | 'expense';
-      const flow = agg.byCategory[b.category];
-      return {
-        ...b,
-        spent: categorySpent(agg, b.category, type),
-        totalRefunded: flow ? flow.refunded : 0,
-      };
+      const calculatedSpent = transactions.filter(t => t.date.startsWith(currentDate) && t.category === b.category).reduce((sum, t) => {
+          if (isTransferTx(t)) return sum; 
+          if (b.type === 'expense') {
+            if (t.type === 'expense') return sum + t.amount;
+            if (t.type === 'income' && t.refundId) return sum - t.amount;
+          }
+          if (b.type === 'income') {
+            if (t.type === 'income' && !t.refundId) return sum + t.amount;
+          }
+          return sum;
+        }, 0);
+      const totalRefundedForCategory = transactions.filter(t => t.date.startsWith(currentDate) && t.category === b.category && t.type === 'income' && !!t.refundId).reduce((sum, t) => sum + t.amount, 0);
+      return { ...b, spent: calculatedSpent, totalRefunded: totalRefundedForCategory };
     });
-  }, [budgets, currentDate, viewIndex]);
-
-  // El layout guardado de un usuario antiguo no conoce los bloques nuevos. Se
-  // fusiona en LECTURA: escribirlo al arrancar subiria el estado entero a la nube.
-  const layout = useMemo(() => mergeLayout(dashboardLayout), [dashboardLayout]);
-
-  const MONTH_SHORT = ["Ene", "Feb", "Mar", "Abr", "May", "Jun", "Jul", "Ago", "Sep", "Oct", "Nov", "Dic"];
-  const monthLabel = (key: string) => MONTH_SHORT[Number(key.slice(5, 7)) - 1] + " " + key.slice(2, 4);
-
-  // Color estable por categoria: el del presupuesto si existe, si no el del
-  // catalogo, y como ultimo recurso uno de la paleta segun el nombre.
-  const colorForCategory = useMemo(() => {
-    const table: Record<string, string> = {};
-    [...CATEGORIES, ...INCOME_CATEGORIES].forEach(c => { table[c.name] = c.color; });
-    budgets.forEach(b => { if (b.color) table[b.category] = b.color; });
-    return (name: string) => {
-      if (table[name]) return table[name];
-      let hash = 0;
-      for (let i = 0; i < name.length; i++) hash = (hash * 31 + name.charCodeAt(i)) % 997;
-      return BUDGET_PRESET_COLORS[hash % BUDGET_PRESET_COLORS.length];
-    };
-  }, [budgets]);
-
-  // Comparativa con el periodo anterior. Usa el indice compartido; el bloque de
-  // patrimonio sigue con su propio calculo, intacto.
-  const comparison = useMemo(() => {
-    const now = aggregatePeriod(viewIndex, currentDate);
-    const before = aggregatePeriod(viewIndex, previousPeriod(currentDate));
-    const row = (label: string, current: number, previous: number, lowerIsBetter: boolean) => {
-      const delta = current - previous;
-      const hasBase = Math.abs(previous) > 0.005;
-      return {
-        label,
-        current,
-        previous,
-        delta,
-        percent: hasBase ? (delta / Math.abs(previous)) * 100 : null,
-        lowerIsBetter,
-      };
-    };
-    return {
-      period: previousPeriod(currentDate),
-      rows: [
-        row('Ingresos', now.baseIncome, before.baseIncome, false),
-        row('Gastos', Math.max(0, now.netExpense), Math.max(0, before.netExpense), true),
-        row('Ahorro', now.netResult, before.netResult, false),
-      ],
-    };
-  }, [viewIndex, currentDate]);
-
-  // Anillo de gasto: las cinco categorias mayores y el resto agrupado.
-  const categoryBreakdown = useMemo(() => {
-    const agg = aggregatePeriod(viewIndex, currentDate);
-    const all = topExpenseCategories(agg, 0);
-    const total = all.reduce((sum, row) => sum + row.amount, 0);
-    const top = all.slice(0, 5);
-    const rest = all.slice(5).reduce((sum, row) => sum + row.amount, 0);
-    const slices = top.map(row => ({ name: row.category, value: row.amount, color: colorForCategory(row.category) }));
-    if (rest > 0) slices.push({ name: 'Otros', value: rest, color: '#94a3b8' });
-    return { slices, total, count: all.length };
-  }, [viewIndex, currentDate, colorForCategory]);
-
-  const expenseCategoryNames = useMemo(() => {
-    const agg = aggregatePeriod(viewIndex, currentDate);
-    return topExpenseCategories(agg, 8).map(row => row.category);
-  }, [viewIndex, currentDate]);
-
-  // Serie temporal filtrable. A diferencia del grafico de patrimonio, el eje es
-  // SIEMPRE mensual, tambien en vista anual: ahi estaba el fallo de la linea plana.
-  const trendData = useMemo(() => {
-    const end = isMonthKey(currentDate) ? currentDate : currentDate.slice(0, 4) + '-12';
-    return monthRange(end, trendRange).map(key => {
-      const agg = aggregatePeriod(viewIndex, key);
-      const point: Record<string, any> = {
-        key,
-        name: monthLabel(key),
-        ingresos: Math.round(agg.baseIncome),
-        gastos: Math.round(Math.max(0, agg.netExpense)),
-        ahorro: Math.round(agg.netResult),
-      };
-      if (compareLastYear) {
-        const lastYearKey = sameMonthPreviousYear(key);
-        const prev = lastYearKey ? aggregatePeriod(viewIndex, lastYearKey) : null;
-        point.ingresosAnterior = prev ? Math.round(prev.baseIncome) : 0;
-        point.gastosAnterior = prev ? Math.round(Math.max(0, prev.netExpense)) : 0;
-        point.ahorroAnterior = prev ? Math.round(prev.netResult) : 0;
-      }
-      trendCategories.forEach(category => {
-        point[category] = Math.round(categorySpent(agg, category, 'expense'));
-      });
-      return point;
-    });
-  }, [viewIndex, currentDate, trendRange, trendCategories, compareLastYear]);
-
-  const toggleTrendCategory = (category: string) => {
-    setTrendCategories(prev =>
-      prev.indexOf(category) === -1 ? [...prev, category] : prev.filter(c => c !== category),
-    );
-  };
+  }, [budgets, currentDate, transactions]);
 
   const renderBlock = (key: string, index: number) => {
     const moveControls = isEditMode && (
       <div className="absolute top-4 right-4 flex gap-1 z-20">
         <button onClick={(e) => { e.stopPropagation(); moveBlock(index, 'up'); }} className="p-2 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl shadow-sm hover:bg-slate-50 dark:hover:bg-slate-700 transition-all active:scale-95" disabled={index === 0}><ChevronUp size={16} className="text-slate-600 dark:text-slate-400" /></button>
-        <button onClick={(e) => { e.stopPropagation(); moveBlock(index, 'down'); }} className="p-2 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl shadow-sm hover:bg-slate-50 dark:hover:bg-slate-700 transition-all active:scale-95" disabled={index === layout.length - 1}><ChevronDown size={16} className="text-slate-600 dark:text-slate-400" /></button>
+        <button onClick={(e) => { e.stopPropagation(); moveBlock(index, 'down'); }} className="p-2 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl shadow-sm hover:bg-slate-50 dark:hover:bg-slate-700 transition-all active:scale-95" disabled={index === dashboardLayout.length - 1}><ChevronDown size={16} className="text-slate-600 dark:text-slate-400" /></button>
       </div>
     );
 
@@ -415,180 +299,6 @@ const Dashboard: React.FC = () => {
             </div>
           </div>
         );
-      case 'comparison':
-        return (
-          <div key={key} className="relative bg-white dark:bg-slate-900 p-8 rounded-[2.5rem] border border-slate-100 dark:border-slate-800 shadow-sm h-full hover:shadow-md transition-all duration-300">
-            {moveControls}
-            <div className="flex items-center gap-2 mb-6">
-              <div className="w-10 h-10 bg-sky-50 dark:bg-sky-900/40 text-sky-600 dark:text-sky-400 rounded-xl flex items-center justify-center transition-colors"><TrendingUp size={20} /></div>
-              <div>
-                <h3 className="font-bold text-slate-800 dark:text-slate-100">Frente al periodo anterior</h3>
-                <p className="text-[10px] text-slate-400 dark:text-slate-500 font-bold uppercase tracking-widest">Comparado con {comparison.period}</p>
-              </div>
-            </div>
-            <div className="space-y-3">
-              {comparison.rows.map(row => {
-                const isFlat = Math.abs(row.delta) < 0.005;
-                const isGood = row.lowerIsBetter ? row.delta < 0 : row.delta > 0;
-                const tone = isFlat
-                  ? 'text-slate-400 dark:text-slate-500 bg-slate-50 dark:bg-slate-800/50'
-                  : isGood
-                    ? 'text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-900/20'
-                    : 'text-rose-600 dark:text-rose-400 bg-rose-50 dark:bg-rose-900/20';
-                return (
-                  <div key={row.label} className="flex items-center justify-between p-4 bg-slate-50 dark:bg-slate-800/50 rounded-2xl border border-slate-100 dark:border-slate-800 transition-colors">
-                    <div>
-                      <p className="text-[10px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-widest">{row.label}</p>
-                      <p className="text-xl font-black text-slate-900 dark:text-white">{Math.round(row.current).toLocaleString()}€</p>
-                      <p className="text-[10px] text-slate-400 dark:text-slate-500 font-medium">Antes: {Math.round(row.previous).toLocaleString()}€</p>
-                    </div>
-                    <div className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-black ${tone}`}>
-                      {isFlat ? <Minus size={14} /> : row.delta > 0 ? <ArrowUpRight size={14} /> : <ArrowDownRight size={14} />}
-                      {row.percent === null
-                        ? (isFlat ? 'Igual' : 'Nuevo')
-                        : `${row.percent > 0 ? '+' : ''}${row.percent.toFixed(0)}%`}
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        );
-      case 'categories': {
-        const hasSlices = categoryBreakdown.slices.length > 0;
-        return (
-          <div key={key} className="relative bg-white dark:bg-slate-900 p-8 rounded-[2.5rem] border border-slate-100 dark:border-slate-800 shadow-sm h-full hover:shadow-md transition-all duration-300">
-            {moveControls}
-            <div className="flex items-center gap-2 mb-6">
-              <div className="w-10 h-10 bg-rose-50 dark:bg-rose-900/40 text-rose-600 dark:text-rose-400 rounded-xl flex items-center justify-center transition-colors"><PieChartIcon size={20} /></div>
-              <h3 className="font-bold text-slate-800 dark:text-slate-100">En qué se va</h3>
-            </div>
-            {hasSlices ? (
-              <>
-                <div className="relative h-48">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <PieChart>
-                      <Pie data={categoryBreakdown.slices} dataKey="value" nameKey="name" innerRadius={58} outerRadius={82} paddingAngle={2} stroke="none">
-                        {categoryBreakdown.slices.map(slice => <Cell key={slice.name} fill={slice.color} />)}
-                      </Pie>
-                      <Tooltip
-                        contentStyle={{ borderRadius: '16px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)', backgroundColor: theme === 'dark' ? '#0f172a' : '#fff', color: theme === 'dark' ? '#f1f5f9' : '#000' }}
-                        formatter={(value: any, name: any) => [`${Number(value).toLocaleString()}€`, name]}
-                      />
-                    </PieChart>
-                  </ResponsiveContainer>
-                  <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
-                    <p className="text-[9px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-widest">Gasto</p>
-                    <p className="text-2xl font-black text-slate-900 dark:text-white">{Math.round(categoryBreakdown.total).toLocaleString()}€</p>
-                  </div>
-                </div>
-                <div className="space-y-2 mt-4">
-                  {categoryBreakdown.slices.map(slice => {
-                    const share = categoryBreakdown.total > 0 ? (slice.value / categoryBreakdown.total) * 100 : 0;
-                    return (
-                      <button
-                        key={slice.name}
-                        onClick={() => navigate('/transactions', { state: { filterCategory: slice.name } })}
-                        className="w-full flex items-center gap-3 p-2.5 rounded-xl hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors text-left"
-                      >
-                        <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: slice.color }} />
-                        <span className="flex-1 text-sm font-bold text-slate-700 dark:text-slate-300 truncate">{slice.name}</span>
-                        <span className="text-[10px] font-black text-slate-400 dark:text-slate-500 tabular-nums">{share.toFixed(0)}%</span>
-                        <span className="text-sm font-black text-slate-900 dark:text-white tabular-nums">{Math.round(slice.value).toLocaleString()}€</span>
-                      </button>
-                    );
-                  })}
-                </div>
-              </>
-            ) : (
-              <div className="text-center py-16">
-                <AlertCircle size={32} className="mx-auto text-slate-300 dark:text-slate-700 mb-3" />
-                <p className="text-xs font-bold text-slate-400 dark:text-slate-600 uppercase tracking-widest">Sin gastos en este periodo</p>
-              </div>
-            )}
-          </div>
-        );
-      }
-      case 'trends': {
-        const axisTick = { fontSize: 10, fill: theme === 'dark' ? '#64748b' : '#94a3b8' };
-        const grid = theme === 'dark' ? '#1e293b' : '#f1f5f9';
-        const tooltipStyle = { borderRadius: '16px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)', backgroundColor: theme === 'dark' ? '#0f172a' : '#fff', color: theme === 'dark' ? '#f1f5f9' : '#000' };
-        const pill = (active: boolean) => `px-3.5 py-1.5 text-[10px] font-bold rounded-lg transition-all ${active ? 'bg-white dark:bg-slate-700 shadow-sm text-blue-600 dark:text-blue-400' : 'text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-300'}`;
-        return (
-          <div key={key} className="relative bg-white dark:bg-slate-900 p-8 md:p-10 rounded-[2.5rem] border border-slate-100 dark:border-slate-800 shadow-sm transition-all duration-300">
-            {moveControls}
-            <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 mb-6">
-              <h3 className="font-bold text-slate-800 dark:text-slate-100 flex items-center gap-2"><SlidersHorizontal size={20} className="text-indigo-500" /> Evolución mes a mes</h3>
-              <div className="flex flex-wrap gap-2">
-                <div className="flex gap-1 bg-slate-100 dark:bg-slate-800 p-1 rounded-xl">
-                  <button onClick={() => setTrendMetric('flow')} className={pill(trendMetric === 'flow')}>Ingreso y gasto</button>
-                  <button onClick={() => setTrendMetric('savings')} className={pill(trendMetric === 'savings')}>Ahorro</button>
-                  <button onClick={() => setTrendMetric('category')} className={pill(trendMetric === 'category')}>Categorías</button>
-                </div>
-                <div className="flex gap-1 bg-slate-100 dark:bg-slate-800 p-1 rounded-xl">
-                  {[6, 12, 24].map(months => (
-                    <button key={months} onClick={() => setTrendRange(months as 6 | 12 | 24)} className={pill(trendRange === months)}>{months} M</button>
-                  ))}
-                </div>
-                {trendMetric !== 'category' && (
-                  <button
-                    onClick={() => setCompareLastYear(!compareLastYear)}
-                    className={`px-3.5 py-1.5 text-[10px] font-bold rounded-xl border transition-all ${compareLastYear ? 'bg-blue-600 text-white border-blue-600' : 'bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 border-transparent'}`}
-                  >
-                    Comparar con el año anterior
-                  </button>
-                )}
-              </div>
-            </div>
-
-            {trendMetric === 'category' && (
-              <div className="flex flex-wrap gap-2 mb-6">
-                {expenseCategoryNames.length === 0 && (
-                  <p className="text-xs text-slate-400 dark:text-slate-500 italic">Aún no hay categorías con gasto en este periodo.</p>
-                )}
-                {expenseCategoryNames.map(category => {
-                  const active = trendCategories.indexOf(category) !== -1;
-                  return (
-                    <button
-                      key={category}
-                      onClick={() => toggleTrendCategory(category)}
-                      className={`flex items-center gap-2 px-3 py-1.5 rounded-xl text-[11px] font-bold border transition-all ${active ? 'border-transparent text-white shadow-sm' : 'border-slate-200 dark:border-slate-700 text-slate-500 dark:text-slate-400 hover:border-slate-300'}`}
-                      style={active ? { backgroundColor: colorForCategory(category) } : undefined}
-                    >
-                      <span className="w-2 h-2 rounded-full" style={{ backgroundColor: active ? 'rgba(255,255,255,0.8)' : colorForCategory(category) }} />
-                      {category}
-                    </button>
-                  );
-                })}
-              </div>
-            )}
-
-            <div className="h-72">
-              <ResponsiveContainer width="100%" height="100%">
-                <LineChart data={trendData}>
-                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={grid} />
-                  <XAxis dataKey="name" axisLine={false} tickLine={false} tick={axisTick} interval="preserveStartEnd" />
-                  <YAxis axisLine={false} tickLine={false} tick={axisTick} width={52} tickFormatter={(v: any) => `${Math.round(Number(v) / 1000)}k`} />
-                  <Tooltip contentStyle={tooltipStyle} formatter={(value: any, name: any) => [`${Number(value).toLocaleString()}€`, name]} />
-                  <Legend wrapperStyle={{ fontSize: 11, paddingTop: 12 }} />
-                  {trendMetric === 'flow' && <Line type="monotone" dataKey="ingresos" name="Ingresos" stroke="#10b981" strokeWidth={3} dot={false} />}
-                  {trendMetric === 'flow' && <Line type="monotone" dataKey="gastos" name="Gastos" stroke="#f43f5e" strokeWidth={3} dot={false} />}
-                  {trendMetric === 'flow' && compareLastYear && <Line type="monotone" dataKey="ingresosAnterior" name="Ingresos año anterior" stroke="#10b981" strokeWidth={2} strokeDasharray="4 4" dot={false} />}
-                  {trendMetric === 'flow' && compareLastYear && <Line type="monotone" dataKey="gastosAnterior" name="Gastos año anterior" stroke="#f43f5e" strokeWidth={2} strokeDasharray="4 4" dot={false} />}
-                  {trendMetric === 'savings' && <Line type="monotone" dataKey="ahorro" name="Ahorro del mes" stroke="#3b82f6" strokeWidth={3} dot={false} />}
-                  {trendMetric === 'savings' && compareLastYear && <Line type="monotone" dataKey="ahorroAnterior" name="Ahorro año anterior" stroke="#3b82f6" strokeWidth={2} strokeDasharray="4 4" dot={false} />}
-                  {trendMetric === 'category' && trendCategories.map(category => (
-                    <Line key={category} type="monotone" dataKey={category} name={category} stroke={colorForCategory(category)} strokeWidth={3} dot={false} />
-                  ))}
-                </LineChart>
-              </ResponsiveContainer>
-            </div>
-            {trendMetric === 'category' && trendCategories.length === 0 && expenseCategoryNames.length > 0 && (
-              <p className="text-center text-xs text-slate-400 dark:text-slate-500 italic mt-4">Elige una categoría arriba para dibujar su línea.</p>
-            )}
-          </div>
-        );
-      }
       case 'accounts':
         return (
           <div key={key} className="relative bg-white dark:bg-slate-900 p-8 rounded-[2.5rem] border border-slate-100 dark:border-slate-800 shadow-sm hover:shadow-md transition-all duration-300">
@@ -600,12 +310,8 @@ const Dashboard: React.FC = () => {
             <div className="space-y-4">{accounts.map(acc => (<div key={acc.id} className="flex justify-between items-center p-4 bg-slate-50 dark:bg-slate-800/50 rounded-2xl border border-slate-100 dark:border-slate-800 transition-colors"><div className="flex items-center gap-3"><span className="text-xl">{acc.emoji || '🏦'}</span><span className="font-bold text-slate-700 dark:text-slate-300 text-sm">{acc.name}</span></div><span className="font-black text-slate-900 dark:text-white">{getAccountHistoricalBalance(acc.id, currentDate).toLocaleString()}€</span></div>))}</div>
           </div>
         );
-      case 'budget': {
-        // Separado por tipo: antes el corte a cuatro se aplicaba sobre ingresos y
-        // gastos mezclados, y por eso "faltaban" categorias que si existian.
-        // Un presupuesto sin tipo cuenta como gasto en vez de desaparecer.
-        const tabBudgets = budgetsWithCalculatedSpent.filter(b => (b.type || 'expense') === budgetTab);
-        const displayedBudgets = isBudgetsExpanded ? tabBudgets : tabBudgets.slice(0, 4);
+      case 'budget':
+        const displayedBudgets = isBudgetsExpanded ? budgetsWithCalculatedSpent : budgetsWithCalculatedSpent.slice(0, 4);
         return (
           <div key={key} className="relative bg-white dark:bg-slate-900 p-8 rounded-[2.5rem] border border-slate-100 dark:border-slate-800 shadow-sm h-full hover:shadow-md transition-all duration-300">
             {moveControls}
@@ -614,11 +320,7 @@ const Dashboard: React.FC = () => {
                 <div className="w-10 h-10 bg-purple-50 dark:bg-purple-900/40 text-purple-600 dark:text-purple-400 rounded-xl flex items-center justify-center transition-colors"><ShoppingBag size={20} /></div>
                 <h3 onClick={() => navigate('/budget')} className="font-bold text-slate-800 dark:text-slate-100 cursor-pointer hover:text-blue-600 dark:hover:text-blue-400 hover:underline underline-offset-4 decoration-2 transition-all">Presupuestos Mes</h3>
               </div>
-              {tabBudgets.length > 4 && (<button onClick={() => setIsBudgetsExpanded(!isBudgetsExpanded)} className="p-2.5 bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 rounded-xl hover:bg-slate-200 dark:hover:bg-slate-700 transition-all shadow-sm"><ChevronDown className={`transition-transform duration-300 ${isBudgetsExpanded ? 'rotate-180' : ''}`} size={18} /></button>)}
-            </div>
-            <div className="flex gap-1 bg-slate-100 dark:bg-slate-800 p-1 rounded-xl mb-6">
-              <button onClick={() => { setBudgetTab('expense'); setIsBudgetsExpanded(false); }} className={`flex-1 py-2 text-[10px] font-black uppercase tracking-widest rounded-lg transition-all ${budgetTab === 'expense' ? 'bg-white dark:bg-slate-700 shadow-sm text-rose-600 dark:text-rose-400' : 'text-slate-400 dark:text-slate-500'}`}>Gastos</button>
-              <button onClick={() => { setBudgetTab('income'); setIsBudgetsExpanded(false); }} className={`flex-1 py-2 text-[10px] font-black uppercase tracking-widest rounded-lg transition-all ${budgetTab === 'income' ? 'bg-white dark:bg-slate-700 shadow-sm text-emerald-600 dark:text-emerald-400' : 'text-slate-400 dark:text-slate-500'}`}>Ingresos</button>
+              {budgets.length > 4 && (<button onClick={() => setIsBudgetsExpanded(!isBudgetsExpanded)} className="p-2.5 bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 rounded-xl hover:bg-slate-200 dark:hover:bg-slate-700 transition-all shadow-sm"><ChevronDown className={`transition-transform duration-300 ${isBudgetsExpanded ? 'rotate-180' : ''}`} size={18} /></button>)}
             </div>
             <div className="space-y-6">
               {displayedBudgets.map(b => {
@@ -631,20 +333,10 @@ const Dashboard: React.FC = () => {
                     {b.totalRefunded > 0 && (<p className="text-[9px] font-black flex items-center gap-1 mt-1 transition-all" style={{ color: b.color }}><ChevronRight size={10} className="shrink-0" /> Reembolsado: +{b.totalRefunded.toLocaleString()}€ (Ahorro en gasto neto)</p>)}
                   </div>
                 );
-              })}
-              {tabBudgets.length === 0 && (
-                <p className="text-xs text-slate-400 dark:text-slate-500 italic text-center py-4">
-                  {budgets.length === 0
-                    ? 'Sin límites definidos.'
-                    : budgetTab === 'expense'
-                      ? 'Sin presupuestos de gasto este mes.'
-                      : 'Sin presupuestos de ingreso este mes.'}
-                </p>
-              )}
+              })}{budgets.length === 0 && <p className="text-xs text-slate-400 dark:text-slate-500 italic text-center py-4">Sin límites definidos.</p>}
             </div>
           </div>
         );
-      }
       default: return null;
     }
   };
@@ -660,7 +352,7 @@ const Dashboard: React.FC = () => {
         <div><h2 className="text-3xl font-black text-slate-800 dark:text-white tracking-tight">Dashboard</h2><p className="text-slate-500 dark:text-slate-400 font-medium tracking-tight transition-colors">Análisis de {currentDate}. Ahorro y liquidez sincronizados.</p></div>
         <button onClick={() => setIsEditMode(!isEditMode)} className={`flex items-center gap-2 px-6 py-3 rounded-2xl font-bold text-sm transition-all shadow-sm ${isEditMode ? 'bg-blue-600 text-white shadow-xl shadow-blue-200 dark:shadow-blue-900/40' : 'bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700'}`}><Settings2 size={18}/> {isEditMode ? 'Guardar Cambios' : 'Personalizar Diseño'}</button>
       </div>
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 auto-rows-min">{layout.map((key, idx) => { const isFullWidth = key === 'balance' || key === 'chart' || key === 'trends'; return (<div key={key} className={`${isFullWidth ? 'lg:col-span-2' : 'lg:col-span-1'} transition-all duration-300`}>{renderBlock(key, idx)}</div>); })}</div>
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 auto-rows-min">{dashboardLayout.map((key, idx) => { const isFullWidth = key === 'balance' || key === 'chart'; return (<div key={key} className={`${isFullWidth ? 'lg:col-span-2' : 'lg:col-span-1'} transition-all duration-300`}>{renderBlock(key, idx)}</div>); })}</div>
       {selectedBudgetForDetails && (
         <div className="fixed inset-0 bg-slate-900/90 z-[60] flex items-center justify-center p-4" onClick={() => setSelectedBudgetForDetails(null)}>
           <div className="bg-white dark:bg-slate-900 rounded-[3rem] w-full max-w-lg p-8 md:p-10 shadow-2xl animate-in fade-in zoom-in duration-300 border border-slate-100 dark:border-slate-800 overflow-hidden flex flex-col max-h-[85vh]" onClick={e => e.stopPropagation()}>

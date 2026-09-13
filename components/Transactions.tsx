@@ -119,12 +119,6 @@ const Transactions: React.FC = () => {
       setIsAdding(true);
       setEditingTx(null);
     }
-    // Llegada desde el anillo de categorias del dashboard: se abre la lista ya
-    // filtrada por esa categoria, para no repetir el filtro a mano.
-    if (location.state?.filterCategory) {
-      setFilterCategory(location.state.filterCategory);
-      setFilter('all');
-    }
   }, [location.state]);
 
   const resetForm = () => {

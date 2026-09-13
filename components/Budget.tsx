@@ -28,12 +28,9 @@ import {
 } from 'lucide-react';
 import { Budget, Transaction } from '../types';
 import { CATEGORIES, INCOME_CATEGORIES, ICON_MAP, BUDGET_PRESET_COLORS } from '../constants';
-import { aggregatePeriod, categorySpent } from '../services/periodIndex';
-import { isMonthKey } from '../services/periods';
 
 const BudgetManager: React.FC = () => {
-  const { budgets, transactions, currentDate, updateBudget, addBudget, deleteBudget, accounts, theme, importBudgetFromMonth, undoBudgetChange, budgetUndoCount, getPeriodsWithBudgets, getEffectiveBudgets, materializeBudgetsForPeriod, viewIndex } = useFinance();
-  const isMonthView = isMonthKey(currentDate);
+  const { budgets, transactions, currentDate, updateBudget, addBudget, deleteBudget, accounts, theme, importBudgetFromMonth, undoBudgetChange, budgetUndoCount, getPeriodsWithBudgets } = useFinance();
   
   // UI States
   const [activeTab, setActiveTab] = useState<'expense' | 'income'>('expense');
@@ -54,40 +51,67 @@ const BudgetManager: React.FC = () => {
   const [selectedColor, setSelectedColor] = useState('#3b82f6');
 
   // --- AUTO-MIGRACIÓN ---
-  // Los presupuestos del periodo se derivan: si el mes no tiene los suyos, se
-  // heredan del mismo mes del anio anterior (si fue un mes normal) o del mes
-  // anterior. Nada de esto se escribe: antes un useEffect los copiaba de verdad
-  // con solo entrar aqui, y por eso el dashboard y esta pantalla no coincidian.
-  const periodBudgets = useMemo(
-    () => getEffectiveBudgets(currentDate),
-    [getEffectiveBudgets, currentDate],
-  );
+  // Solo para budgets con periodo: si el mes actual no tiene ninguno específico,
+  // copiar del mes más reciente. Los legacy (sin periodo) siempre se muestran.
+  const autoMigratedRef = useRef<Set<string>>(new Set());
+  
+  useEffect(() => {
+    if (!currentDate || autoMigratedRef.current.has(currentDate)) return;
+    
+    // Comprobar si hay presupuestos específicos de este periodo
+    const currentPeriodBudgets = budgets.filter(b => b.period === currentDate);
+    if (currentPeriodBudgets.length > 0) return; // Ya tiene budget propio
+    
+    // Buscar otro mes con presupuestos específicos para importar
+    const allPeriods = getPeriodsWithBudgets().filter(p => p !== currentDate);
+    
+    if (allPeriods.length > 0) {
+      autoMigratedRef.current.add(currentDate);
+      importBudgetFromMonth(allPeriods[0], currentDate);
+    }
+  }, [currentDate, budgets, getPeriodsWithBudgets, importBudgetFromMonth]);
 
-  // Gasto real desde el indice compartido, el mismo que usa el dashboard.
+  // --- PRESUPUESTOS DEL PERIODO ---
+  // Incluye: presupuestos específicos del periodo actual + legacy (sin periodo)
+  // Los legacy se muestran en cada mes hasta que el usuario los elimine o los asigne
+  const periodBudgets = useMemo(() => {
+    const periodSpecific = budgets.filter(b => b.period === currentDate);
+    const legacy = budgets.filter(b => !b.period);
+    
+    // Evitar duplicados: si un legacy tiene la misma categoría que uno específico, priorizar el específico
+    const specificCategories = new Set(periodSpecific.map(b => b.category));
+    const uniqueLegacy = legacy.filter(b => !specificCategories.has(b.category));
+    
+    return [...periodSpecific, ...uniqueLegacy];
+  }, [budgets, currentDate]);
+
+  // Cálculo dinámico de presupuestos con su gasto real
   const budgetsWithCalculatedSpent = useMemo(() => {
-    const agg = aggregatePeriod(viewIndex, currentDate);
     return periodBudgets.map(b => {
-      const flow = agg.byCategory[b.category];
-      return {
-        ...b,
-        spent: categorySpent(agg, b.category, b.type),
-        totalRefunded: flow ? flow.refunded : 0,
-      };
+      const calculatedSpent = transactions
+        .filter(t => t.date.startsWith(currentDate) && t.category === b.category)
+        .reduce((sum, t) => {
+          if (b.type === 'expense') {
+            if (t.type === 'expense') return sum + t.amount;
+            if (t.type === 'income' && t.refundId) return sum - t.amount;
+          }
+          if (b.type === 'income') {
+            if (t.type === 'income' && !t.refundId) return sum + t.amount;
+          }
+          return sum;
+        }, 0);
+      
+      const totalRefunded = transactions
+        .filter(t => t.date.startsWith(currentDate) && t.category === b.category && t.type === 'income' && !!t.refundId)
+        .reduce((sum, t) => sum + t.amount, 0);
+      
+      return { ...b, spent: calculatedSpent, totalRefunded };
     });
-  }, [periodBudgets, viewIndex, currentDate]);
+  }, [periodBudgets, transactions, currentDate]);
 
   const filteredBudgets = useMemo(() => {
-    return budgetsWithCalculatedSpent.filter(b => (b.type || 'expense') === activeTab);
+    return budgetsWithCalculatedSpent.filter(b => b.type === activeTab);
   }, [budgetsWithCalculatedSpent, activeTab]);
-
-  const inheritedInTab = useMemo(
-    () => filteredBudgets.filter(b => b.origin === 'inherited' || b.origin === 'legacy'),
-    [filteredBudgets],
-  );
-  const inheritedFromLabel = useMemo(() => {
-    const source = filteredBudgets.filter(b => b.inheritedFrom)[0];
-    return source ? source.inheritedFrom : null;
-  }, [filteredBudgets]);
 
   const budgetTransactions = useMemo(() => {
     if (!selectedBudget) return [];
@@ -147,9 +171,6 @@ const BudgetManager: React.FC = () => {
   };
 
   const openCreate = () => {
-    // En vista anual currentDate es 'YYYY' y el presupuesto naceria invisible en
-    // todos los meses. Mejor mandar al usuario a un mes concreto.
-    if (!isMonthView) return;
     resetForm();
     const defaultCats = activeTab === 'expense' ? CATEGORIES : INCOME_CATEGORIES;
     setCategory(defaultCats[0].name);
@@ -254,8 +275,6 @@ const BudgetManager: React.FC = () => {
           {/* New Budget Button */}
           <button 
             onClick={openCreate}
-            disabled={!isMonthView}
-            title={!isMonthView ? 'Cambia a vista mensual para crear un presupuesto' : undefined}
             className="flex items-center gap-1.5 px-4 py-3 md:px-8 md:py-4 bg-blue-600 text-white font-black text-sm rounded-xl md:rounded-2xl hover:bg-blue-700 transition-all shadow-xl shadow-blue-200 dark:shadow-none active:scale-95"
           >
             <Plus size={18} />
@@ -292,8 +311,6 @@ const BudgetManager: React.FC = () => {
           <div className="flex flex-col sm:flex-row gap-3 justify-center">
             <button 
               onClick={openCreate}
-              disabled={!isMonthView}
-              title={!isMonthView ? 'Cambia a vista mensual para crear un presupuesto' : undefined}
               className="flex items-center justify-center gap-2 px-6 py-3 bg-blue-600 text-white font-black rounded-2xl hover:bg-blue-700 transition-all shadow-lg active:scale-95"
             >
               <Plus size={18} /> Crear Categoría
@@ -307,50 +324,6 @@ const BudgetManager: React.FC = () => {
               </button>
             )}
           </div>
-        </div>
-      )}
-
-      {inheritedInTab.length > 0 && isMonthView && (
-        <div className="flex flex-col sm:flex-row sm:items-center gap-4 p-5 rounded-2xl md:rounded-[2rem] bg-violet-50 dark:bg-violet-900/20 border border-violet-100 dark:border-violet-900/40">
-          <div className="w-10 h-10 rounded-xl bg-violet-100 dark:bg-violet-900/40 text-violet-600 dark:text-violet-300 flex items-center justify-center shrink-0">
-            <Copy size={18} />
-          </div>
-          <div className="flex-1">
-            <p className="text-sm font-black text-violet-800 dark:text-violet-200">
-              {inheritedFromLabel
-                ? `Heredado de ${formatPeriodLabel(inheritedFromLabel)}`
-                : 'Presupuesto heredado'}
-            </p>
-            <p className="text-xs text-violet-600 dark:text-violet-300/80 mt-0.5">
-              {formatPeriodLabel(currentDate)} todavía no tiene presupuesto propio. Estos límites se muestran calculados; no se ha guardado nada.
-            </p>
-          </div>
-          <button
-            onClick={() => materializeBudgetsForPeriod(currentDate, 'all')}
-            className="px-5 py-3 bg-violet-600 text-white font-black text-xs rounded-2xl hover:bg-violet-700 transition-all active:scale-95 shrink-0"
-          >
-            Personalizar este mes
-          </button>
-        </div>
-      )}
-
-      {!isMonthView && periodBudgets.length > 0 && (
-        <div className="flex items-center gap-3 p-5 rounded-2xl md:rounded-[2rem] bg-slate-50 dark:bg-slate-800/50 border border-slate-100 dark:border-slate-800">
-          <Calendar size={18} className="text-slate-400 shrink-0" />
-          <p className="text-xs text-slate-500 dark:text-slate-400">
-            Vista anual: los límites son la suma de los doce meses y no se pueden editar aquí. Cambia a vista mensual para modificarlos.
-          </p>
-        </div>
-      )}
-
-      {periodBudgets.length > 0 && filteredBudgets.length === 0 && (
-        <div className="bg-white dark:bg-slate-900 rounded-2xl md:rounded-[2.5rem] border-2 border-dashed border-slate-200 dark:border-slate-700 p-10 text-center transition-colors">
-          <p className="text-sm font-black text-slate-500 dark:text-slate-400 mb-1">
-            {activeTab === 'expense' ? 'Sin presupuestos de gasto' : 'Sin presupuestos de ingreso'}
-          </p>
-          <p className="text-xs text-slate-400 dark:text-slate-500">
-            {formatPeriodLabel(currentDate)} sí tiene presupuestos, pero de la otra pestaña.
-          </p>
         </div>
       )}
 
@@ -382,11 +355,6 @@ const BudgetManager: React.FC = () => {
               const progress = b.limit > 0 ? Math.min((b.spent / b.limit) * 100, 100) : 0;
               const isOverBudget = activeTab === 'expense' && b.spent > b.limit;
               const isConfirmingDelete = deletingId === b.id;
-              // Una tarjeta heredada apunta al presupuesto de OTRO mes. Editarla o
-              // borrarla directamente cambiaria aquel mes, no este. Por eso primero
-              // se materializa como propia y luego ya se edita la copia.
-              const isOwn = b.origin === 'own';
-              const canEdit = isOwn && isMonthView;
               
               return (
                 <div 
@@ -409,34 +377,18 @@ const BudgetManager: React.FC = () => {
                       <div>
                         <h4 className="text-base md:text-lg font-black text-slate-800 dark:text-white tracking-tight transition-colors">{b.category}</h4>
                         <p className="text-xs text-slate-400 dark:text-slate-500 font-bold uppercase tracking-widest">{activeTab === 'expense' ? 'Gasto' : 'Ingreso'}</p>
-                        {!isOwn && isMonthView && (
-                          <span className="inline-flex items-center gap-1 mt-1 px-2 py-0.5 rounded-md bg-violet-50 dark:bg-violet-900/30 text-violet-600 dark:text-violet-300 text-[9px] font-black uppercase tracking-wider">
-                            {b.inheritedFrom ? `Heredado de ${formatPeriodLabel(b.inheritedFrom)}` : 'Heredado'}
-                          </span>
-                        )}
                       </div>
                     </div>
                     <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-all">
-                      {!canEdit && isMonthView && (
-                        <button
-                          onClick={(e) => { e.stopPropagation(); materializeBudgetsForPeriod(currentDate, [b.category]); }}
-                          className="px-3 py-2 text-[10px] font-black uppercase tracking-wider text-violet-600 dark:text-violet-300 hover:bg-violet-50 dark:hover:bg-violet-900/40 rounded-xl transition-colors"
-                          title="Guarda una copia propia de este mes para poder editarla"
-                        >
-                          Personalizar
-                        </button>
-                      )}
                       <button 
                         onClick={(e) => { e.stopPropagation(); openEdit(b); }} 
-                        disabled={!canEdit}
-                        className="p-2.5 text-slate-400 hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-900/40 rounded-xl transition-colors disabled:opacity-30 disabled:pointer-events-none"
+                        className="p-2.5 text-slate-400 hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-900/40 rounded-xl transition-colors"
                       >
                         <Edit2 size={18} />
                       </button>
                       <button 
-                        disabled={!canEdit}
                         onClick={(e) => handleDeleteClick(e, b.id)} 
-                        className={`p-2.5 rounded-xl transition-all flex items-center gap-1 disabled:opacity-30 disabled:pointer-events-none ${
+                        className={`p-2.5 rounded-xl transition-all flex items-center gap-1 ${
                           isConfirmingDelete 
                             ? 'bg-rose-600 text-white animate-pulse' 
                             : 'text-slate-400 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-900/40'
@@ -604,7 +556,7 @@ const BudgetManager: React.FC = () => {
 
             {periodBudgets.length > 0 && (
               <div className="mb-6 p-4 bg-amber-50 dark:bg-amber-900/20 border-2 border-amber-200 dark:border-amber-800 rounded-2xl">
-                <p className="text-xs font-black text-amber-700 dark:text-amber-400">Se añadirán las categorías que falten en {formatPeriodLabel(currentDate)}. Lo que ya tengas en este mes se respeta.</p>
+                <p className="text-xs font-black text-amber-700 dark:text-amber-400">⚠️ Esto reemplazará todas las categorías actuales de {formatPeriodLabel(currentDate)}.</p>
               </div>
             )}
 

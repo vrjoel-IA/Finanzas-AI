@@ -1,8 +1,6 @@
 
 import React, { useMemo, useState } from 'react';
 import { useFinance } from '../App';
-import { projectRealistic, buildMonthPoints } from '../services/realisticProjection';
-import { isMonthKey } from '../services/periods';
 import { 
   TrendingUp, 
   Target, 
@@ -30,9 +28,7 @@ import {
   Tooltip, 
   ResponsiveContainer,
   AreaChart,
-  Area,
-  Line,
-  ComposedChart
+  Area
 } from 'recharts';
 import { ExtraSaving } from '../types';
 
@@ -44,8 +40,6 @@ const WealthProjections: React.FC = () => {
     theme, 
     accounts, 
     budgets,
-    getEffectiveBudgets,
-    viewIndex,
     getSavingHistoricalBalance, 
     getAccountHistoricalBalance,
     // Context State & Methods
@@ -57,7 +51,6 @@ const WealthProjections: React.FC = () => {
   } = useFinance();
   
   // Estados de visibilidad de secciones
-  const [projectionMode, setProjectionMode] = useState<'plan' | 'real'>('plan');
   const [showManualContributions, setShowManualContributions] = useState(false);
   const [showExtraEvents, setShowExtraEvents] = useState(false);
 
@@ -80,21 +73,18 @@ const WealthProjections: React.FC = () => {
     const expense = monthTx.filter(t => t.type === 'expense').reduce((s, t) => s + t.amount, 0);
     
     // 3. Estimación de Coste de Vida (Burn Rate)
-    // Presupuestos del PERIODO ACTUAL. Antes se usaba el array completo del
-    // contexto, que suma los presupuestos de todos los meses del historial: el
-    // gasto estimado se inflaba mes a mes segun se acumulaban periodos.
-    const periodBudgets = getEffectiveBudgets(currentDate);
-    const totalMonthlyBudgetedExpense = periodBudgets
+    // En lugar de usar solo el gasto de este mes (que puede ser engañoso), 
+    // usamos la suma de los presupuestos definidos como gasto recurrente esperado.
+    const totalMonthlyBudgetedExpense = budgets
       .filter(b => b.type === 'expense')
       .reduce((sum, b) => sum + b.limit, 0);
     
-    // El mayor entre el gasto real y el presupuestado, que es lo que este
-    // comentario prometia desde el principio.
-    const estimatedMonthlyBurnRate = Math.max(expense, totalMonthlyBudgetedExpense, 500); // Mínimo 500€ de vida
+    // Usamos el mayor entre el gasto real y el presupuesto para ser conservadores
+    const estimatedMonthlyBurnRate = Math.max(totalMonthlyBudgetedExpense, 500); // Mínimo 500€ de vida
 
     // 4. Tasa de Ahorro Inteligente
     // Si no hay ingresos este mes, comparamos el presupuesto de ingresos con el de gastos
-    const budgetedIncome = periodBudgets.filter(b => b.type === 'income').reduce((s, b) => s + b.limit, 0);
+    const budgetedIncome = budgets.filter(b => b.type === 'income').reduce((s, b) => s + b.limit, 0);
     const effectiveIncome = income > 0 ? income : budgetedIncome;
     const effectiveExpense = expense > 0 ? expense : totalMonthlyBudgetedExpense;
     
@@ -123,7 +113,7 @@ const WealthProjections: React.FC = () => {
       totalInAccounts,
       totalInSavings
     };
-  }, [transactions, currentDate, accounts, savings, getEffectiveBudgets, getAccountHistoricalBalance, getSavingHistoricalBalance]);
+  }, [transactions, currentDate, accounts, savings, budgets, getAccountHistoricalBalance, getSavingHistoricalBalance]);
 
   // LÓGICA DE PROYECCIÓN (AÑO 0 = NET WORTH REAL SINCRONIZADO)
   const projectionData = useMemo(() => {
@@ -139,20 +129,24 @@ const WealthProjections: React.FC = () => {
       const year = Math.floor(month / 12);
       const isYearStart = month % 12 === 0;
 
-      // El punto del anio se emite ANTES de capitalizar ese mes. Antes se hacia
-      // al reves, y por eso el punto "Hoy" del grafico ya venia con un mes de
-      // intereses y una aportacion, sin coincidir con el patrimonio de la cabecera.
-      if (isYearStart) {
-        if (year > 0) {
-          extraSavings.forEach(extra => {
-            if (extra.isRecurring) {
-              if (year >= extra.year) liquidCapital += extra.amount;
-            } else if (year === extra.year) {
-              liquidCapital += extra.amount;
-            }
-          });
-        }
+      savings.forEach(s => {
+        const monthlyRate = ((s.growthRate || 0) / 100) / 12;
+        // Use global state for contribution
+        const monthlyContrib = manualContributions[s.id] || 0;
+        goalBalances[s.id] = (goalBalances[s.id] * (1 + monthlyRate)) + monthlyContrib;
+      });
 
+      if (isYearStart && year > 0) {
+        extraSavings.forEach(extra => {
+          if (extra.isRecurring) {
+            if (year >= extra.year) liquidCapital += extra.amount;
+          } else if (year === extra.year) {
+            liquidCapital += extra.amount;
+          }
+        });
+      }
+
+      if (isYearStart) {
         const totalSavingsYear = (Object.values(goalBalances) as number[]).reduce((a, b) => a + b, 0);
         data.push({
           year: year === 0 ? 'Hoy' : `${year}a`,
@@ -162,53 +156,9 @@ const WealthProjections: React.FC = () => {
           soloLiquido: Math.round(liquidCapital)
         });
       }
-
-      savings.forEach(s => {
-        const monthlyRate = ((s.growthRate || 0) / 100) / 12;
-        // Use global state for contribution
-        const monthlyContrib = manualContributions[s.id] || 0;
-        goalBalances[s.id] = (goalBalances[s.id] * (1 + monthlyRate)) + monthlyContrib;
-      });
     }
     return data;
   }, [savings, extraSavings, manualContributions, metrics.totalInAccounts, getSavingHistoricalBalance, currentDate]);
-
-  // PROYECCION REALISTA: parte del historial de verdad, no del plan perfecto.
-  // Usa la mediana del ahorro mensual observado, para que un mes atipico (una
-  // paga extra, una mudanza) no distorsione la estimacion.
-  const realistic = useMemo(() => {
-    const endMonth = isMonthKey(currentDate) ? currentDate : currentDate.slice(0, 4) + '-12';
-    const history = buildMonthPoints(viewIndex, endMonth, 24);
-
-    // Rentabilidad media ponderada por el saldo de cada hucha.
-    const balances = savings.map(sv => ({ growth: sv.growthRate || 0, amount: getSavingHistoricalBalance(sv.id, currentDate) }));
-    const totalBalance = balances.reduce((sum, b) => sum + b.amount, 0);
-    const annualGrowthRate = totalBalance > 0
-      ? balances.reduce((sum, b) => sum + b.growth * b.amount, 0) / totalBalance
-      : 0;
-
-    return projectRealistic({
-      months: history,
-      seedLiquid: metrics.totalInAccounts,
-      seedSavings: metrics.totalInSavings,
-      annualGrowthRate,
-      years: 20,
-      inflationRate: 2.5,
-      volatilityK: 1,
-    });
-  }, [viewIndex, currentDate, savings, metrics.totalInAccounts, metrics.totalInSavings, getSavingHistoricalBalance]);
-
-  // Ambas curvas sobre el mismo eje, para poder compararlas de un vistazo.
-  const combinedData = useMemo(() => projectionData.map((point, index) => {
-    const real = realistic.points[index];
-    return {
-      ...point,
-      realista: real ? real.base : null,
-      bandaMin: real ? real.low : null,
-      // El area apilada dibuja la banda: desde el minimo, el grosor hasta el maximo.
-      bandaAncho: real ? Math.max(0, real.high - real.low) : null,
-    };
-  }), [projectionData, realistic]);
 
   const handleAddExtraSaving = () => {
     if (!newExtraLabel || newExtraAmount === '') return;
@@ -285,28 +235,14 @@ const WealthProjections: React.FC = () => {
               <div className="p-2 bg-blue-50 dark:bg-blue-900/40 rounded-lg text-blue-600 dark:text-blue-400"><TrendingUp size={24} /></div>
               Evolución Patrimonial
             </h3>
-            <div className="flex flex-wrap items-center gap-3">
-              <div className="flex gap-1 bg-slate-100 dark:bg-slate-800 p-1 rounded-xl">
-                <button onClick={() => setProjectionMode('plan')} className={`px-4 py-2 text-[10px] font-black uppercase tracking-widest rounded-lg transition-all ${projectionMode === 'plan' ? 'bg-white dark:bg-slate-700 shadow-sm text-blue-600 dark:text-blue-400' : 'text-slate-400 dark:text-slate-500'}`}>Simulación</button>
-                <button onClick={() => setProjectionMode('real')} className={`px-4 py-2 text-[10px] font-black uppercase tracking-widest rounded-lg transition-all ${projectionMode === 'real' ? 'bg-white dark:bg-slate-700 shadow-sm text-emerald-600 dark:text-emerald-400' : 'text-slate-400 dark:text-slate-500'}`}>Realista</button>
-              </div>
-              <div className="text-[10px] font-black bg-slate-100 dark:bg-slate-800 px-4 py-2 rounded-xl text-slate-500 dark:text-slate-400 uppercase tracking-widest transition-colors">
-                Hoy: {metrics.netWorth.toLocaleString()}€
-              </div>
+            <div className="text-[10px] font-black bg-slate-100 dark:bg-slate-800 px-4 py-2 rounded-xl text-slate-500 dark:text-slate-400 uppercase tracking-widest transition-colors">
+              Hoy: {metrics.netWorth.toLocaleString()}€
             </div>
           </div>
-
-          <p className="text-xs text-slate-500 dark:text-slate-400 -mt-6 mb-8 leading-relaxed max-w-2xl">
-            {projectionMode === 'plan'
-              ? 'Si cumplieras el plan a rajatabla: aportas cada mes lo que has fijado y no pasa nada imprevisto.'
-              : realistic.insufficientData
-                ? 'Aún no hay historial suficiente para estimar tu ritmo real. Con tres meses de movimientos registrados aparecerá aquí.'
-                : `Basado en tus ${realistic.monthsUsed} meses con movimiento: ahorras ${Math.round(realistic.medianNetSavings).toLocaleString()}€ al mes en un mes normal, unos ${Math.round(realistic.oneYearEstimate).toLocaleString()}€ al año. La banda marca tus meses buenos y malos.`}
-          </p>
           
           <div className="w-full h-[350px] md:h-[450px]">
             <ResponsiveContainer width="100%" height="100%">
-              <ComposedChart data={combinedData} margin={{ top: 10, right: 30, left: 0, bottom: 0 }}>
+              <AreaChart data={projectionData} margin={{ top: 10, right: 30, left: 0, bottom: 0 }}>
                 <defs>
                   <linearGradient id="colorWealth" x1="0" y1="0" x2="0" y2="1">
                     <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.3}/>
@@ -337,18 +273,9 @@ const WealthProjections: React.FC = () => {
                           <p className="text-[10px] font-black text-blue-600 dark:text-blue-400 uppercase tracking-widest mb-3">{data.fullYear}</p>
                           <div className="space-y-2">
                              <div className="flex justify-between gap-8 items-center">
-                               <span className="text-xs font-bold text-slate-400 uppercase">{projectionMode === 'real' ? 'Plan ideal' : 'Patrimonio Total'}</span>
+                               <span className="text-xs font-bold text-slate-400 uppercase">Patrimonio Total</span>
                                <span className="text-xl font-black text-slate-900 dark:text-white">{data.patrimonio.toLocaleString()}€</span>
                              </div>
-                             {projectionMode === 'real' && data.realista !== null && (
-                               <>
-                                 <div className="flex justify-between gap-8 items-center">
-                                   <span className="text-xs font-bold text-emerald-500 uppercase">A tu ritmo real</span>
-                                   <span className="text-xl font-black text-emerald-600 dark:text-emerald-400">{data.realista.toLocaleString()}€</span>
-                                 </div>
-                                 <p className="text-[10px] font-bold text-slate-400 text-right">Entre {data.bandaMin.toLocaleString()}€ y {(data.bandaMin + data.bandaAncho).toLocaleString()}€</p>
-                               </>
-                             )}
                              <div className="h-px bg-slate-100 dark:bg-slate-800 w-full" />
                              <div className="flex justify-between gap-8 items-center text-[10px]">
                                <span className="font-bold text-slate-400 uppercase tracking-tighter">Huchas + Inversión</span>
@@ -365,12 +292,6 @@ const WealthProjections: React.FC = () => {
                     return null;
                   }}
                 />
-                {projectionMode === 'real' && !realistic.insufficientData && (
-                  <Area type="monotone" dataKey="bandaMin" stackId="banda" stroke="none" fill="transparent" isAnimationActive={false} legendType="none" />
-                )}
-                {projectionMode === 'real' && !realistic.insufficientData && (
-                  <Area type="monotone" dataKey="bandaAncho" stackId="banda" stroke="none" fill="#10b981" fillOpacity={0.14} isAnimationActive={false} legendType="none" />
-                )}
                 <Area 
                   type="monotone" 
                   dataKey="patrimonio" 
@@ -381,10 +302,7 @@ const WealthProjections: React.FC = () => {
                   dot={false}
                   activeDot={{ r: 8, strokeWidth: 0, fill: '#3b82f6' }}
                 />
-                {projectionMode === 'real' && !realistic.insufficientData && (
-                  <Line type="monotone" dataKey="realista" stroke="#10b981" strokeWidth={4} dot={false} isAnimationActive={false} activeDot={{ r: 7, strokeWidth: 0, fill: '#10b981' }} />
-                )}
-              </ComposedChart>
+              </AreaChart>
             </ResponsiveContainer>
           </div>
         </div>

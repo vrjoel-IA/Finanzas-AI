@@ -1,9 +1,8 @@
 
 import React, { useState } from 'react';
 import { useFinance } from '../App';
-import { Plus, Trash2, Edit2, ArrowRightLeft, CreditCard, Banknote, Landmark, X, Check, Users } from 'lucide-react';
+import { Plus, Trash2, Edit2, ArrowRightLeft, CreditCard, Banknote, Landmark, X, Check } from 'lucide-react';
 import { Account } from '../types';
-import { ownershipWeight, isShared } from '../services/ownership';
 
 const Accounts: React.FC = () => {
   const { accounts, currentDate, getAccountHistoricalBalance, addAccount, updateAccount, deleteAccount, addTransaction, theme } = useFinance();
@@ -18,8 +17,6 @@ const Accounts: React.FC = () => {
   const [balanceInput, setBalanceInput] = useState<number | ''>('');
   const [color, setColor] = useState('#3b82f6');
   const [emoji, setEmoji] = useState('🏦');
-  const [shared, setShared] = useState(false);
-  const [ownershipInput, setOwnershipInput] = useState<number | ''>(50);
 
   // Transfer form
   const [fromId, setFromId] = useState('');
@@ -32,8 +29,6 @@ const Accounts: React.FC = () => {
     setBalanceInput('');
     setColor('#3b82f6');
     setEmoji('🏦');
-    setShared(false);
-    setOwnershipInput(50);
   };
 
   const handleOpenAdd = () => {
@@ -47,8 +42,6 @@ const Accounts: React.FC = () => {
     setBalanceInput(acc.initialBalance);
     setColor(acc.color);
     setEmoji(acc.emoji || '🏦');
-    setShared(isShared(acc));
-    setOwnershipInput(isShared(acc) ? (acc.ownershipPercent as number) : 50);
     setEditingAccount(acc);
   };
 
@@ -62,8 +55,7 @@ const Accounts: React.FC = () => {
         type, 
         initialBalance: finalBalance, 
         color, 
-        emoji,
-        ownershipPercent: shared ? (ownershipInput === '' ? 50 : Number(ownershipInput)) : undefined
+        emoji 
       });
       setEditingAccount(null);
     } else {
@@ -72,8 +64,7 @@ const Accounts: React.FC = () => {
         type, 
         initialBalance: finalBalance, 
         color, 
-        emoji,
-        ownershipPercent: shared ? (ownershipInput === '' ? 50 : Number(ownershipInput)) : undefined
+        emoji 
       });
       setIsAdding(false);
     }
@@ -190,15 +181,6 @@ const Accounts: React.FC = () => {
                 <span className="text-3xl font-black text-slate-900 dark:text-white">{displayBalance.toLocaleString('es-ES')}€</span>
                 <span className="text-[10px] text-slate-400 dark:text-slate-500 font-bold uppercase tracking-wider">Saldo en {currentDate}</span>
               </div>
-              {isShared(acc) && (
-                <div className="mt-3 flex items-center gap-2 px-3 py-2 bg-blue-50 dark:bg-blue-900/20 rounded-xl border border-blue-100 dark:border-blue-900/40">
-                  <Users size={14} className="text-blue-600 dark:text-blue-400 shrink-0" />
-                  <span className="text-[11px] font-bold text-blue-700 dark:text-blue-300">
-                    Tu parte: {Math.round(displayBalance * ownershipWeight(acc.ownershipPercent)).toLocaleString('es-ES')}€
-                  </span>
-                  <span className="text-[10px] font-black text-blue-400 dark:text-blue-500 ml-auto">{acc.ownershipPercent}%</span>
-                </div>
-              )}
             </div>
           );
         })}
@@ -274,48 +256,6 @@ const Accounts: React.FC = () => {
                     className="w-full h-[60px] bg-slate-50 dark:bg-slate-800 border border-slate-100 dark:border-slate-700 rounded-2xl p-2 outline-none cursor-pointer" 
                   />
                 </div>
-              </div>
-
-              <div className="rounded-2xl border border-slate-100 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50 p-4">
-                <button
-                  type="button"
-                  onClick={() => setShared(!shared)}
-                  className="w-full flex items-center justify-between gap-3 text-left"
-                >
-                  <span className="flex items-center gap-3">
-                    <span className={`w-10 h-10 rounded-xl flex items-center justify-center transition-colors ${shared ? 'bg-blue-600 text-white' : 'bg-white dark:bg-slate-800 text-slate-400 border border-slate-200 dark:border-slate-700'}`}>
-                      <Users size={18} />
-                    </span>
-                    <span>
-                      <span className="block text-xs font-bold text-slate-700 dark:text-slate-200 uppercase tracking-widest">Cuenta compartida</span>
-                      <span className="block text-[11px] text-slate-400 dark:text-slate-500">Por ejemplo, la cuenta conjunta con tu pareja</span>
-                    </span>
-                  </span>
-                  <span className={`w-12 h-7 rounded-full p-1 transition-colors shrink-0 ${shared ? 'bg-blue-600' : 'bg-slate-200 dark:bg-slate-700'}`}>
-                    <span className={`block w-5 h-5 bg-white rounded-full shadow transition-transform ${shared ? 'translate-x-5' : ''}`} />
-                  </span>
-                </button>
-
-                {shared && (
-                  <div className="mt-4 pt-4 border-t border-slate-200 dark:border-slate-700">
-                    <label className="block text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-widest mb-2">Qué parte es tuya (%)</label>
-                    <input
-                      type="number"
-                      min={0}
-                      max={100}
-                      value={ownershipInput}
-                      onChange={e => setOwnershipInput(e.target.value === '' ? '' : Number(e.target.value))}
-                      className="w-full bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-2xl p-4 outline-none focus:border-blue-500 text-slate-900 dark:text-slate-100 font-bold"
-                      placeholder="50"
-                    />
-                    <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-3 leading-relaxed">
-                      Los movimientos y el saldo se siguen registrando <strong className="text-slate-700 dark:text-slate-200">íntegros</strong>, para que cuadren con el extracto del banco. El porcentaje solo se aplica al analizar: gasto por categoría, presupuestos y gráficos.
-                    </p>
-                    <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-2 leading-relaxed">
-                      Registra las dos aportaciones —la tuya y la de la otra persona— con la categoría <strong className="text-slate-700 dark:text-slate-200">Traspaso</strong>: así mueven el saldo sin contar como ingreso tuyo.
-                    </p>
-                  </div>
-                )}
               </div>
 
               <div className="flex gap-3 pt-4">
