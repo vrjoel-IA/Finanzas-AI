@@ -19,11 +19,16 @@ create table if not exists profiles (
 
 alter table profiles enable row level security;
 
+-- Se eliminan los dos nombres que ha tenido cada politica a lo largo del tiempo.
+-- Sin esto, ejecutar el script sobre una base antigua dejaba duplicados: las
+-- politicas viejas sobrevivian por llamarse distinto.
 drop policy if exists "Users can view own profile" on profiles;
+drop policy if exists "Users can read own profile" on profiles;
 create policy "Users can view own profile" on profiles
   for select using ( auth.uid() = id );
 
 drop policy if exists "Users can insert their own profile" on profiles;
+drop policy if exists "Users can insert own profile" on profiles;
 create policy "Users can insert their own profile" on profiles
   for insert with check ( auth.uid() = id );
 
