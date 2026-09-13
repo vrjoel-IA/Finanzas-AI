@@ -7,7 +7,7 @@ import {
   CalendarRange, Sun, Moon, LineChart as LineChartIcon, 
   LogOut, Loader2, Sparkles, CloudCheck, CloudUpload, RefreshCw,
   ChevronLeft, ChevronRight, AlertTriangle, CloudOff,
-  RefreshCcw, Download, ShieldCheck
+  RefreshCcw, Download, ShieldCheck, History
 } from 'lucide-react';
 import { FinanceState, Account, Saving, Refund, Transaction, Budget, AIChallenge, ExtraSaving, ChatMessage } from './types';
 import { INITIAL_DATA } from './constants';
@@ -15,6 +15,8 @@ import { supabase } from './services/supabase';
 import { syncRefundsWithTransactions as syncRefunds } from './services/refunds';
 import { checkDestructiveWrite, summarize } from './services/stateGuard';
 import { fullBackup, transactionsToCsv, backupFilename } from './services/exportData';
+import { shouldSnapshot, describeSummary } from './services/versionHistory';
+import type { Snapshot } from './services/versionHistory';
 import type { DestructiveVerdict } from './services/stateGuard';
 
 // Componentes de vistas
@@ -96,6 +98,10 @@ interface FinanceContextType extends FinanceState {
   blockedWrite: DestructiveVerdict | null;
   /** Autoriza el guardado bloqueado. Solo desde una accion explicita del usuario. */
   confirmBlockedWrite: () => void;
+  /** Versiones guardadas en el servidor, de la mas reciente a la mas antigua. */
+  listVersions: () => Promise<{ id: number; created_at: string; tx_count: number; reason: string | null }[]>;
+  /** Restaura una version. Sustituye el estado actual por el de esa fecha. */
+  restoreVersion: (id: number) => Promise<boolean>;
   loginAsGuest: () => void;
   retrySync: () => void;
   manualRefresh: () => Promise<void>;
@@ -133,6 +139,7 @@ const App: React.FC = () => {
   const lastSafeStateRef = useRef<FinanceState | null>(null);
   const [blockedWrite, setBlockedWrite] = useState<DestructiveVerdict | null>(null);
   const overrideGuardRef = useRef(false);
+  const lastSnapshotRef = useRef<Snapshot | null>(null);
   const [isAppInitializing, setIsAppInitializing] = useState(true); 
   const [isSyncing, setIsSyncing] = useState(false); 
   const [syncError, setSyncError] = useState(false); 
@@ -338,6 +345,48 @@ const App: React.FC = () => {
     window.setTimeout(() => { overrideGuardRef.current = false; }, 5000);
   }, []);
 
+  const listVersions = useCallback(async () => {
+    if (!session?.user?.id) return [];
+    try {
+      const { data, error } = await withTimeout<any>(
+        supabase
+          .from('profile_versions')
+          .select('id, created_at, tx_count, reason')
+          .eq('user_id', session.user.id)
+          .order('created_at', { ascending: false })
+          .limit(60),
+        15000,
+      );
+      if (error) throw error;
+      return data || [];
+    } catch (e) {
+      console.warn('[Historial] No se pudo leer:', e);
+      return [];
+    }
+  }, [session]);
+
+  const restoreVersion = useCallback(async (id: number) => {
+    if (!session?.user?.id) return false;
+    try {
+      const { data, error } = await withTimeout<any>(
+        supabase.from('profile_versions').select('state').eq('id', id).maybeSingle(),
+        15000,
+      );
+      if (error || !data?.state) throw error || new Error('version vacia');
+      const recuperado = { ...INITIAL_DATA, ...data.state } as FinanceState;
+      // Restaurar es una decision explicita: la guardia no debe estorbar aqui.
+      overrideGuardRef.current = true;
+      lastSafeStateRef.current = recuperado;
+      setState(recuperado);
+      setBlockedWrite(null);
+      window.setTimeout(() => { overrideGuardRef.current = false; }, 5000);
+      return true;
+    } catch (e) {
+      console.warn('[Historial] No se pudo restaurar:', e);
+      return false;
+    }
+  }, [session]);
+
   const loginAsGuest = useCallback(() => {
     // Entrar en Modo Local con la sesion abierta fue lo que destruyo los datos
     // de un usuario: el guardado automatico miraba `session` antes que `isGuest`
@@ -508,7 +557,25 @@ const App: React.FC = () => {
               );
               if (error) throw error;
               safeSetItem(getDirtyKey(session.user.id), 'false');
-              setSyncError(false); 
+              setSyncError(false);
+
+              // Historial: una fila nueva, nunca un UPDATE. Es lo que faltaba el
+              // dia que un estado corrupto se llevo por delante el historial de
+              // un usuario sin dejar nada que restaurar.
+              const decision = shouldSnapshot(lastSnapshotRef.current, state, now.getTime());
+              if (decision.snapshot) {
+                const resumen = summarize(state);
+                lastSnapshotRef.current = { at: now.getTime(), summary: resumen };
+                withTimeout<any>(
+                  supabase.from('profile_versions').insert({
+                    user_id: session.user.id,
+                    state,
+                    tx_count: resumen.transactions,
+                    reason: decision.reason,
+                  }),
+                  15000,
+                ).catch((e: any) => console.warn('[Historial] No se pudo guardar la version:', e?.message || e));
+              }
             } catch (err) {
               setSyncError(true); 
             } finally {
@@ -580,6 +647,8 @@ const App: React.FC = () => {
     syncError,
     blockedWrite,
     confirmBlockedWrite,
+    listVersions,
+    restoreVersion,
     loginAsGuest,
     retrySync,
     manualRefresh,
@@ -800,7 +869,7 @@ const App: React.FC = () => {
       const periods: string[] = Array.from(new Set(state.budgets.filter(b => b.period).map(b => b.period as string)));
       return periods.sort((a, b) => b.localeCompare(a));
     },
-  }), [state, isGuest, isSyncing, syncError, blockedWrite, confirmBlockedWrite, undoCount, budgetUndoCount, getAccountHistoricalBalance, getSavingHistoricalBalance, getNetWorthHistorical, loginAsGuest, retrySync, manualRefresh, saveData, forceResync, syncRefundsWithTransactions]);
+  }), [state, isGuest, isSyncing, syncError, blockedWrite, confirmBlockedWrite, listVersions, restoreVersion, undoCount, budgetUndoCount, getAccountHistoricalBalance, getSavingHistoricalBalance, getNetWorthHistorical, loginAsGuest, retrySync, manualRefresh, saveData, forceResync, syncRefundsWithTransactions]);
 
   if (isAppInitializing) { 
     return (
@@ -923,6 +992,94 @@ const BackupBox = () => {
         </button>
       </div>
       {hecho && <p className="text-[10px] font-bold text-emerald-600 dark:text-emerald-400 text-center mt-2">{hecho}</p>}
+      {!state.isGuest && <VersionHistory />}
+    </div>
+  );
+};
+
+/**
+ * Historial de versiones del servidor.
+ *
+ * Cada guardado relevante inserta una fila nueva en lugar de pisar la anterior,
+ * asi que aqui siempre hay un punto al que volver. Es exactamente lo que no
+ * existia el dia que un estado corrupto se llevo por delante todo el historial.
+ */
+const VersionHistory = () => {
+  const { listVersions, restoreVersion } = useFinance();
+  const [abierto, setAbierto] = useState(false);
+  const [versiones, setVersiones] = useState<{ id: number; created_at: string; tx_count: number; reason: string | null }[] | null>(null);
+  const [cargando, setCargando] = useState(false);
+  const [confirmando, setConfirmando] = useState<number | null>(null);
+
+  const abrir = async () => {
+    const siguiente = !abierto;
+    setAbierto(siguiente);
+    if (siguiente && versiones === null) {
+      setCargando(true);
+      setVersiones(await listVersions());
+      setCargando(false);
+    }
+  };
+
+  const restaurar = async (id: number) => {
+    if (confirmando !== id) {
+      setConfirmando(id);
+      window.setTimeout(() => setConfirmando(actual => (actual === id ? null : actual)), 4000);
+      return;
+    }
+    setConfirmando(null);
+    await restoreVersion(id);
+    setAbierto(false);
+  };
+
+  const fecha = (iso: string) => {
+    const d = new Date(iso);
+    const p = (n: number) => (n < 10 ? '0' + n : '' + n);
+    return p(d.getDate()) + '/' + p(d.getMonth() + 1) + ' ' + p(d.getHours()) + ':' + p(d.getMinutes());
+  };
+
+  return (
+    <div className="mt-3 pt-3 border-t border-emerald-200/70 dark:border-emerald-900/50">
+      <button
+        onClick={abrir}
+        className="w-full flex items-center justify-center gap-2 py-2 text-emerald-700 dark:text-emerald-300 text-[10px] font-bold uppercase tracking-widest hover:bg-emerald-100/60 dark:hover:bg-slate-800 rounded-xl transition-colors"
+      >
+        <History size={12} /> Versiones anteriores
+      </button>
+
+      {abierto && (
+        <div className="mt-2 max-h-56 overflow-y-auto custom-scrollbar space-y-1.5">
+          {cargando && <p className="text-[10px] text-emerald-700/70 dark:text-emerald-300/70 text-center py-3">Cargando…</p>}
+          {!cargando && versiones && versiones.length === 0 && (
+            <p className="text-[10px] text-emerald-700/70 dark:text-emerald-300/70 text-center py-3 leading-relaxed">
+              Aún no hay versiones. Se guardan solas según vayas usando la app.
+            </p>
+          )}
+          {!cargando && versiones && versiones.map(v => (
+            <button
+              key={v.id}
+              onClick={() => restaurar(v.id)}
+              className={`w-full text-left px-3 py-2 rounded-xl border transition-colors ${
+                confirmando === v.id
+                  ? 'bg-amber-500 text-white border-amber-500'
+                  : 'bg-white dark:bg-slate-800 border-emerald-100 dark:border-emerald-900/50 hover:border-emerald-300'
+              }`}
+            >
+              <div className="flex items-center justify-between gap-2">
+                <span className={`text-[11px] font-black ${confirmando === v.id ? 'text-white' : 'text-slate-700 dark:text-slate-200'}`}>
+                  {fecha(v.created_at)}
+                </span>
+                <span className={`text-[10px] font-mono ${confirmando === v.id ? 'text-white' : 'text-emerald-700 dark:text-emerald-400'}`}>
+                  {v.tx_count} mov.
+                </span>
+              </div>
+              <p className={`text-[9px] mt-0.5 ${confirmando === v.id ? 'text-white/90' : 'text-slate-400 dark:text-slate-500'}`}>
+                {confirmando === v.id ? '¿Seguro? Pulsa otra vez para restaurar' : v.reason || 'version guardada'}
+              </p>
+            </button>
+          ))}
+        </div>
+      )}
     </div>
   );
 };
