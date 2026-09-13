@@ -7,12 +7,15 @@ import {
   CalendarRange, Sun, Moon, LineChart as LineChartIcon, 
   LogOut, Loader2, Sparkles, CloudCheck, CloudUpload, RefreshCw,
   ChevronLeft, ChevronRight, AlertTriangle, CloudOff,
-  RefreshCcw
+  RefreshCcw, Download, ShieldCheck
 } from 'lucide-react';
 import { FinanceState, Account, Saving, Refund, Transaction, Budget, AIChallenge, ExtraSaving, ChatMessage } from './types';
 import { INITIAL_DATA } from './constants';
 import { supabase } from './services/supabase';
 import { syncRefundsWithTransactions as syncRefunds } from './services/refunds';
+import { checkDestructiveWrite, summarize } from './services/stateGuard';
+import { fullBackup, transactionsToCsv, backupFilename } from './services/exportData';
+import type { DestructiveVerdict } from './services/stateGuard';
 
 // Componentes de vistas
 import Dashboard from './components/Dashboard';
@@ -89,6 +92,10 @@ interface FinanceContextType extends FinanceState {
   isGuest: boolean;
   isSyncing: boolean;
   syncError: boolean;
+  /** Guardado bloqueado por perder datos. null = todo normal. */
+  blockedWrite: DestructiveVerdict | null;
+  /** Autoriza el guardado bloqueado. Solo desde una accion explicita del usuario. */
+  confirmBlockedWrite: () => void;
   loginAsGuest: () => void;
   retrySync: () => void;
   manualRefresh: () => Promise<void>;
@@ -121,6 +128,11 @@ const App: React.FC = () => {
   const [isGuest, setIsGuest] = useState(false);
   const [state, setState] = useState<FinanceState>(INITIAL_DATA as any);
   const [isMenuOpen, setIsMenuOpen] = useState(false);
+  // Guardia anti-destruccion: ultimo estado que se considera bueno, y el
+  // veredicto cuando un guardado se bloquea por perder datos.
+  const lastSafeStateRef = useRef<FinanceState | null>(null);
+  const [blockedWrite, setBlockedWrite] = useState<DestructiveVerdict | null>(null);
+  const overrideGuardRef = useRef(false);
   const [isAppInitializing, setIsAppInitializing] = useState(true); 
   const [isSyncing, setIsSyncing] = useState(false); 
   const [syncError, setSyncError] = useState(false); 
@@ -178,7 +190,11 @@ const App: React.FC = () => {
             const key = getBackupKey(session.user.id);
             const tsKey = getTimestampKey(session.user.id);
             const dirtyKey = getDirtyKey(session.user.id);
-            // Guardar el estado actual como backup
+            // Al cerrar tampoco se escribe un estado que pierde datos: si la
+            // app se quedo en blanco, cerrar la pestana no puede ser lo que
+            // destruya la ultima copia local.
+            const veredicto = checkDestructiveWrite(lastSafeStateRef.current, stateRef.current);
+            if (veredicto.destructive && !overrideGuardRef.current) return;
             localStorage.setItem(key, JSON.stringify(stateRef.current));
             // IMPORTANTE: Mantener el timestamp existente para no inflar la fecha.
             // Solo poner timestamp nuevo si no existe uno previo.
@@ -211,8 +227,11 @@ const App: React.FC = () => {
             localTime = localTimestampStr ? parseInt(localTimestampStr) : 0;
             if (localState) {
                 ignoreNextUpdate.current = true;
-                setState(prev => ({ ...INITIAL_DATA, ...localState }));
-                setDataLoadedFromCloud(true); 
+                const cargado = { ...INITIAL_DATA, ...localState } as FinanceState;
+                setState(prev => cargado);
+                // Referencia contra la que se mediran los guardados siguientes.
+                lastSafeStateRef.current = cargado;
+                setDataLoadedFromCloud(true);
                 setTimeout(() => { ignoreNextUpdate.current = false; }, 500);
             }
         } catch (e) {}
@@ -239,8 +258,25 @@ const App: React.FC = () => {
       const localIsNewerOrEqual = localTime >= cloudTime;
       const localIsSignificantlyNewer = localTime > cloudTime + 5000;
 
-      if (localState && localIsNewerOrEqual && (isDirty || localIsSignificantlyNewer)) {
+      // Esta es la rama que propago la perdida: la copia local envenenada era
+      // "mas reciente", asi que se subio encima del historial real de la nube.
+      // Ahora se compara contenido, no solo fechas. Una copia local con menos
+      // datos que la nube no sube: se avisa y decide el usuario.
+      const veredictoSubida = checkDestructiveWrite(data?.state, localState);
+      if (localState && localIsNewerOrEqual && (isDirty || localIsSignificantlyNewer) && veredictoSubida.destructive) {
+        console.warn('[Sync] Subida bloqueada:', veredictoSubida.reason);
+        setBlockedWrite(veredictoSubida);
+        // Se conserva lo que hay en la nube, que es lo que mas datos tiene.
+        if (data && data.state) {
+          const seguro = { ...INITIAL_DATA, ...data.state } as FinanceState;
+          ignoreNextUpdate.current = true;
+          setState(seguro);
+          lastSafeStateRef.current = seguro;
+          setTimeout(() => { ignoreNextUpdate.current = false; }, 500);
+        }
+      } else if (localState && localIsNewerOrEqual && (isDirty || localIsSignificantlyNewer)) {
         console.log('[Sync] → Subiendo datos locales a la nube (local más reciente)');
+        lastSafeStateRef.current = localState;
         await withTimeout<any>(
             supabase.from('profiles').upsert({
                 id: userId,
@@ -255,6 +291,7 @@ const App: React.FC = () => {
         const mergedState = { ...INITIAL_DATA, ...data.state };
           ignoreNextUpdate.current = true;
           setState(mergedState as FinanceState);
+          lastSafeStateRef.current = mergedState as FinanceState;
           safeSetItem(getBackupKey(userId), JSON.stringify(mergedState));
           safeSetItem(getTimestampKey(userId), cloudTime.toString());
           safeSetItem(getDirtyKey(userId), 'false');
@@ -292,7 +329,24 @@ const App: React.FC = () => {
     return () => document.removeEventListener('visibilitychange', handleReSync);
   }, [session, isGuest, isSyncing, fetchUserData]);
 
+  const confirmBlockedWrite = useCallback(() => {
+    // Solo se llega aqui pulsando el boton del aviso. Se abre la puerta una vez,
+    // se deja pasar el guardado y se vuelve a cerrar.
+    overrideGuardRef.current = true;
+    lastSafeStateRef.current = stateRef.current;
+    setBlockedWrite(null);
+    window.setTimeout(() => { overrideGuardRef.current = false; }, 5000);
+  }, []);
+
   const loginAsGuest = useCallback(() => {
+    // Entrar en Modo Local con la sesion abierta fue lo que destruyo los datos
+    // de un usuario: el guardado automatico miraba `session` antes que `isGuest`
+    // y escribia el estado de ejemplo sobre la copia de su cuenta. Ahora el modo
+    // invitado solo existe cuando NO hay sesion.
+    if (session) {
+      console.warn('[Modo Local] Ignorado: hay una sesion abierta. Cierra sesion primero.');
+      return;
+    }
     safeSetItem('finanzas_pro_guest', 'true');
     setIsGuest(true);
     const saved = safeGetItem('finanzas_pro_local_state');
@@ -301,7 +355,7 @@ const App: React.FC = () => {
     setIsAppInitializing(false); 
     setSyncError(false); 
     setInitializationTimeout(false); 
-  }, [setIsGuest, setState, setIsAppInitializing, setSyncError, setInitializationTimeout]);
+  }, [session, setIsGuest, setState, setIsAppInitializing, setSyncError, setInitializationTimeout]);
 
   const initApp = useCallback(async () => {
     if (initAppRunningRef.current) return;
@@ -424,13 +478,27 @@ const App: React.FC = () => {
     if (!isAppInitializing) {
       debounceTimer = window.setTimeout(async () => {
         const now = new Date();
-        if (session) {
+        // Antes de escribir en ningun sitio: comprobar que este guardado no
+        // destruye datos. Es la comprobacion que no existia el dia que esta app
+        // borro el historial completo de un usuario.
+        const veredicto = checkDestructiveWrite(lastSafeStateRef.current, state);
+        if (veredicto.destructive && !overrideGuardRef.current) {
+          console.warn('[Guardia] Guardado bloqueado:', veredicto.reason);
+          setBlockedWrite(veredicto);
+          return;
+        }
+        setBlockedWrite(null);
+
+        // isGuest PRIMERO. Al reves, el modo invitado escribia sobre la copia de
+        // la cuenta con sesion iniciada.
+        if (isGuest) {
+           safeSetItem('finanzas_pro_local_state', JSON.stringify(state));
+        } else if (session) {
            safeSetItem(getBackupKey(session.user.id), JSON.stringify(state));
            safeSetItem(getTimestampKey(session.user.id), now.getTime().toString());
            safeSetItem(getDirtyKey(session.user.id), 'true');
-        } else if (isGuest) {
-           safeSetItem('finanzas_pro_local_state', JSON.stringify(state));
         }
+        lastSafeStateRef.current = state;
         if (session && dataLoadedFromCloud && !isGuest) {
             setIsSyncing(true);
             try {
@@ -510,6 +578,8 @@ const App: React.FC = () => {
     isGuest,
     isSyncing,
     syncError,
+    blockedWrite,
+    confirmBlockedWrite,
     loginAsGuest,
     retrySync,
     manualRefresh,
@@ -730,7 +800,7 @@ const App: React.FC = () => {
       const periods: string[] = Array.from(new Set(state.budgets.filter(b => b.period).map(b => b.period as string)));
       return periods.sort((a, b) => b.localeCompare(a));
     },
-  }), [state, isGuest, isSyncing, syncError, undoCount, budgetUndoCount, getAccountHistoricalBalance, getSavingHistoricalBalance, getNetWorthHistorical, loginAsGuest, retrySync, manualRefresh, saveData, forceResync, syncRefundsWithTransactions]);
+  }), [state, isGuest, isSyncing, syncError, blockedWrite, confirmBlockedWrite, undoCount, budgetUndoCount, getAccountHistoricalBalance, getSavingHistoricalBalance, getNetWorthHistorical, loginAsGuest, retrySync, manualRefresh, saveData, forceResync, syncRefundsWithTransactions]);
 
   if (isAppInitializing) { 
     return (
@@ -753,6 +823,7 @@ const App: React.FC = () => {
           <Sidebar isOpen={isMenuOpen} onClose={() => setIsMenuOpen(false)} onLogout={logout} isGuest={isGuest} session={session} />
           <main className="flex-1 flex flex-col overflow-hidden relative">
             <Header onMenuClick={() => setIsMenuOpen(true)} />
+            <GuardBanner />
             <div className="flex-1 overflow-y-auto p-4 md:p-8 custom-scrollbar">
               <Routes>
                 <Route path="/" element={<Dashboard />} />
@@ -773,6 +844,141 @@ const App: React.FC = () => {
   );
 };
 
+/** Descarga un texto como fichero, sin pasar por ningun servidor. */
+const descargarTexto = (contenido: string, nombre: string, tipo: string) => {
+  const blob = new Blob([contenido], { type: tipo + ';charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = nombre;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+};
+
+/**
+ * Copia de seguridad local.
+ *
+ * Hasta ahora no habia forma de sacar los datos de la app. Cuando el JSON de la
+ * nube se corrompio, no existia ninguna copia en ningun sitio. Esto es el minimo
+ * para que eso no vuelva a depender de un servidor ajeno.
+ */
+const BackupBox = () => {
+  const state = useFinance();
+  const [hecho, setHecho] = useState<string | null>(null);
+
+  const marcar = (texto: string) => {
+    setHecho(texto);
+    window.setTimeout(() => setHecho(null), 2500);
+  };
+
+  const descargarCopia = () => {
+    const ahora = new Date();
+    const plano = {
+      accounts: state.accounts, savings: state.savings, refunds: state.refunds,
+      transactions: state.transactions, budgets: state.budgets, challenges: state.challenges,
+      extraSavings: state.extraSavings, manualContributions: state.manualContributions,
+      currentDate: state.currentDate, viewMode: state.viewMode,
+      dashboardLayout: state.dashboardLayout, theme: state.theme,
+      chatHistory: state.chatHistory, chatLastDate: state.chatLastDate,
+    };
+    descargarTexto(fullBackup(plano, ahora), backupFilename('finanzas-copia', 'json', ahora), 'application/json');
+    marcar('Copia descargada');
+  };
+
+  const descargarCsv = () => {
+    const ahora = new Date();
+    descargarTexto(
+      transactionsToCsv({ accounts: state.accounts, savings: state.savings, transactions: state.transactions } as any),
+      backupFilename('finanzas-movimientos', 'csv', ahora),
+      'text/csv',
+    );
+    marcar('CSV descargado');
+  };
+
+  const numTx = Array.isArray(state.transactions) ? state.transactions.length : 0;
+
+  return (
+    <div className="mx-4 mb-4 p-4 bg-emerald-50 dark:bg-emerald-950/30 rounded-2xl border border-emerald-100 dark:border-emerald-900/40">
+      <div className="flex items-center gap-2 mb-3">
+        <ShieldCheck size={14} className="text-emerald-600 dark:text-emerald-400 shrink-0" />
+        <p className="text-[10px] font-black text-emerald-700 dark:text-emerald-300 uppercase tracking-widest">Copia de seguridad</p>
+      </div>
+      <p className="text-[10px] text-emerald-700/80 dark:text-emerald-300/70 mb-3 leading-relaxed">
+        {numTx} movimientos. Se descarga en tu equipo, sin pasar por ningún servidor.
+      </p>
+      <div className="space-y-2">
+        <button
+          onClick={descargarCopia}
+          className="w-full flex items-center justify-center gap-2 py-2.5 bg-emerald-600 text-white rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-emerald-700 transition-colors"
+        >
+          <Download size={12} /> Copia completa
+        </button>
+        <button
+          onClick={descargarCsv}
+          className="w-full flex items-center justify-center gap-2 py-2 bg-white dark:bg-slate-800 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-900 rounded-xl text-[10px] font-bold uppercase tracking-widest hover:bg-emerald-100 dark:hover:bg-slate-700 transition-colors"
+        >
+          Movimientos en CSV
+        </button>
+      </div>
+      {hecho && <p className="text-[10px] font-bold text-emerald-600 dark:text-emerald-400 text-center mt-2">{hecho}</p>}
+    </div>
+  );
+};
+
+/**
+ * Aviso de guardado bloqueado.
+ *
+ * Existe por lo que paso el 13 de septiembre de 2026: la app se quedo con los
+ * datos de ejemplo y los guardo encima del historial real sin decir nada. Un
+ * guardado que destruye datos ya no es silencioso: se para y se pregunta.
+ */
+const GuardBanner = () => {
+  const { blockedWrite, confirmBlockedWrite } = useFinance();
+  if (!blockedWrite) return null;
+  const { before, after, reason } = blockedWrite;
+  return (
+    <div className="mx-4 mt-4 md:mx-8 rounded-2xl border-2 border-rose-300 dark:border-rose-800 bg-rose-50 dark:bg-rose-950/40 p-5 shadow-lg animate-in fade-in slide-in-from-top-2 duration-300">
+      <div className="flex flex-col md:flex-row md:items-start gap-4">
+        <div className="w-11 h-11 rounded-xl bg-rose-600 text-white flex items-center justify-center shrink-0">
+          <AlertTriangle size={22} />
+        </div>
+        <div className="flex-1 min-w-0">
+          <h2 className="text-base font-black text-rose-900 dark:text-rose-100">
+            Guardado detenido para proteger tus datos
+          </h2>
+          <p className="text-sm text-rose-800 dark:text-rose-200 mt-1">{reason}</p>
+          <p className="text-xs text-rose-700 dark:text-rose-300/80 mt-2 leading-relaxed">
+            No se ha escrito nada, ni aquí ni en la nube. Si esto no lo has hecho tú,
+            <strong> recarga la página</strong> y tus datos volverán como estaban.
+          </p>
+          <div className="mt-3 flex flex-wrap gap-x-5 gap-y-1 text-[11px] font-mono text-rose-700 dark:text-rose-300">
+            <span>transacciones {before.transactions} → {after.transactions}</span>
+            <span>cuentas {before.accounts} → {after.accounts}</span>
+            <span>huchas {before.savings} → {after.savings}</span>
+            <span>presupuestos {before.budgets} → {after.budgets}</span>
+          </div>
+        </div>
+        <div className="flex flex-col gap-2 shrink-0">
+          <button
+            onClick={() => window.location.reload()}
+            className="px-5 py-3 rounded-xl bg-rose-600 text-white text-xs font-black uppercase tracking-wider hover:bg-rose-700 transition-colors"
+          >
+            Recuperar mis datos
+          </button>
+          <button
+            onClick={confirmBlockedWrite}
+            className="px-5 py-2.5 rounded-xl bg-white dark:bg-slate-800 text-rose-700 dark:text-rose-300 text-[11px] font-bold border border-rose-200 dark:border-rose-800 hover:bg-rose-100 dark:hover:bg-slate-700 transition-colors"
+          >
+            Sé lo que hago, guardar
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 const Sidebar = ({ isOpen, onClose, onLogout, isGuest, session }: { isOpen: boolean, onClose: () => void, onLogout: () => void, isGuest: boolean, session: any }) => {
   const location = useLocation();
   const { isSyncing, syncError, retrySync, manualRefresh, forceResync } = useFinance();
@@ -788,6 +994,7 @@ const Sidebar = ({ isOpen, onClose, onLogout, isGuest, session }: { isOpen: bool
              {!isGuest && <button onClick={forceResync} className="w-full mt-2 flex items-center justify-center gap-2 py-2 bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors"><RefreshCcw size={12} /> Sincronizar Nube</button>}
         </div>
         <nav className="flex-1 px-4 space-y-1 overflow-y-auto custom-scrollbar">{menuItems.map((item) => (<Link key={item.path} to={item.path} onClick={onClose} className={`flex items-center gap-3 px-4 py-3 rounded-xl transition-all duration-200 ${location.pathname === item.path ? 'bg-blue-600 text-white font-semibold shadow-lg shadow-blue-100 dark:shadow-none' : 'text-slate-500 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800 hover:text-slate-800 dark:hover:text-slate-200'}`}><span className="shrink-0">{item.icon}</span><span className="text-sm">{item.label}</span></Link>))}</nav>
+        <BackupBox />
         <div className="p-4 border-t border-slate-100 dark:border-slate-800"><button onClick={onLogout} className="w-full flex items-center gap-3 px-4 py-3 text-slate-500 hover:text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-900/20 rounded-xl transition-all font-bold text-sm"><LogOut size={20} /> Salir de la App</button></div>
       </aside>
     </>
