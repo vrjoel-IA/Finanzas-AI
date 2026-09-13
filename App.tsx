@@ -1075,7 +1075,7 @@ const BackupBox = () => {
   const numTx = Array.isArray(state.transactions) ? state.transactions.length : 0;
 
   return (
-    <div className="mx-4 mb-4 p-4 bg-emerald-50 dark:bg-emerald-950/30 rounded-2xl border border-emerald-100 dark:border-emerald-900/40">
+    <div className="p-4 bg-emerald-50 dark:bg-emerald-950/30 rounded-2xl border border-emerald-100 dark:border-emerald-900/40">
       <div className="flex items-center gap-2 mb-3">
         <ShieldCheck size={14} className="text-emerald-600 dark:text-emerald-400 shrink-0" />
         <p className="text-[10px] font-black text-emerald-700 dark:text-emerald-300 uppercase tracking-widest">Copia de seguridad</p>
@@ -1242,24 +1242,119 @@ const GuardBanner = () => {
   );
 };
 
+/** Estado de sincronizacion en una linea, reutilizado en la fila y en el panel. */
+const useSyncState = () => {
+  const { isGuest, isSyncing, syncError } = useFinance();
+  if (isGuest) return { color: 'bg-amber-500', texto: 'Sin sincronizar', tono: 'text-amber-600 dark:text-amber-400' };
+  if (syncError) return { color: 'bg-rose-500', texto: 'Sin conexión', tono: 'text-rose-600 dark:text-rose-400' };
+  if (isSyncing) return { color: 'bg-blue-500 animate-pulse', texto: 'Sincronizando…', tono: 'text-blue-600 dark:text-blue-400' };
+  return { color: 'bg-emerald-500', texto: 'Sincronizado', tono: 'text-emerald-600 dark:text-emerald-400' };
+};
+
+/**
+ * Panel de cuenta.
+ *
+ * Antes la barra lateral llevaba encima la caja de sincronizacion y la de copias,
+ * y la navegacion quedaba arrinconada. Todo eso vive aqui: se abre cuando hace
+ * falta y no ocupa el resto del tiempo.
+ */
+const AccountPanel = ({ onClose, onLogout, session }: { onClose: () => void; onLogout: () => void; session: any }) => {
+  const { isGuest, syncError, retrySync, manualRefresh, forceResync } = useFinance();
+  const sync = useSyncState();
+  const email = session?.user?.email || '';
+
+  return (
+    <div className="fixed inset-0 z-[70] flex items-end md:items-center justify-center bg-slate-900/70 backdrop-blur-sm p-0 md:p-4" onClick={onClose}>
+      <div
+        className="bg-white dark:bg-slate-900 w-full md:max-w-md rounded-t-[2rem] md:rounded-[2rem] border border-slate-200 dark:border-slate-800 shadow-2xl max-h-[88vh] overflow-y-auto custom-scrollbar animate-in slide-in-from-bottom-4 md:zoom-in duration-200"
+        onClick={e => e.stopPropagation()}
+      >
+        <div className="flex items-start justify-between p-6 pb-4">
+          <div className="flex items-center gap-3 min-w-0">
+            <div className={`w-12 h-12 rounded-2xl flex items-center justify-center shrink-0 font-black text-sm ${isGuest ? 'bg-amber-100 dark:bg-amber-900/40 text-amber-600' : 'bg-blue-600 text-white'}`}>
+              {isGuest ? <Sparkles size={20} /> : email.substring(0, 2).toUpperCase()}
+            </div>
+            <div className="min-w-0">
+              <p className="text-sm font-black text-slate-800 dark:text-white truncate">{isGuest ? 'Modo Local' : email}</p>
+              <div className="flex items-center gap-1.5 mt-0.5">
+                <span className={`w-1.5 h-1.5 rounded-full ${sync.color}`} />
+                <span className={`text-[11px] font-bold ${sync.tono}`}>{sync.texto}</span>
+              </div>
+            </div>
+          </div>
+          <button onClick={onClose} className="p-2 -mr-2 text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 rounded-xl shrink-0">
+            <X size={20} />
+          </button>
+        </div>
+
+        {syncError && !isGuest && (
+          <div className="mx-6 mb-4 flex items-start gap-2 p-3 bg-rose-50 dark:bg-rose-900/20 rounded-xl border border-rose-100 dark:border-rose-900/40">
+            <AlertTriangle className="text-rose-600 shrink-0 mt-0.5" size={14} />
+            <p className="text-[11px] text-rose-700 dark:text-rose-300 leading-relaxed">
+              No se ha podido contactar con el servidor. Tus cambios están guardados en este dispositivo y subirán solos al recuperar la conexión.
+            </p>
+          </div>
+        )}
+
+        {!isGuest && (
+          <div className="px-6 pb-5 grid grid-cols-2 gap-2">
+            <button onClick={() => { syncError ? retrySync() : manualRefresh(); }} className="flex items-center justify-center gap-2 py-3 bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors">
+              <RefreshCw size={12} /> Actualizar
+            </button>
+            <button onClick={forceResync} className="flex items-center justify-center gap-2 py-3 bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors">
+              <RefreshCcw size={12} /> Traer de la nube
+            </button>
+          </div>
+        )}
+
+        <div className="px-6 pb-6">
+          <BackupBox />
+        </div>
+
+        <div className="px-6 pb-6 border-t border-slate-100 dark:border-slate-800 pt-5">
+          <button onClick={onLogout} className="w-full flex items-center justify-center gap-2 py-3 text-slate-500 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-900/20 rounded-xl transition-colors font-bold text-sm">
+            <LogOut size={18} /> Salir de la app
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 const Sidebar = ({ isOpen, onClose, onLogout, isGuest, session }: { isOpen: boolean, onClose: () => void, onLogout: () => void, isGuest: boolean, session: any }) => {
   const location = useLocation();
-  const { isSyncing, syncError, retrySync, manualRefresh, forceResync } = useFinance();
+  const [panelAbierto, setPanelAbierto] = useState(false);
+  const sync = useSyncState();
+  const email = session?.user?.email || '';
   const menuItems = [{ path: '/', icon: <LayoutDashboard size={20} />, label: 'Dashboard' }, { path: '/accounts', icon: <Wallet size={20} />, label: 'Cuentas' }, { path: '/savings', icon: <PiggyBank size={20} />, label: 'Ahorro' }, { path: '/wealth', icon: <LineChartIcon size={20} />, label: 'Proyecciones' }, { path: '/refunds', icon: <Receipt size={20} />, label: 'Reembolsos' }, { path: '/transactions', icon: <BarChart3 size={20} />, label: 'Transacciones' }, { path: '/budget', icon: <Receipt size={20} />, label: 'Presupuesto' }, { path: '/advisor', icon: <MessageSquare size={20} />, label: 'Asesor IA' }];
   return (
     <>
       {isOpen && <div className="fixed inset-0 bg-slate-900/60 dark:bg-black/60 backdrop-blur-sm z-40 md:hidden" onClick={onClose} />}
       <aside className={`fixed md:static inset-y-0 left-0 w-64 bg-white dark:bg-slate-900 border-r border-slate-200 dark:border-slate-800 shadow-xl md:shadow-sm z-50 flex flex-col transition-transform duration-300 ease-in-out ${isOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'}`}>
         <div className="p-6 flex items-center justify-between"><h1 className="text-xl font-bold text-blue-600 dark:text-blue-400 flex items-center gap-2"><div className="w-8 h-8 bg-blue-600 dark:bg-blue-50 rounded-lg flex items-center justify-center text-white"><Wallet size={18} /></div>Finanzas Pro</h1><button onClick={onClose} className="md:hidden p-2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"><X size={20} /></button></div>
-        <div className="mx-4 mb-4 p-4 bg-slate-50 dark:bg-slate-800/50 rounded-2xl border border-slate-100 dark:border-slate-800">
-             <div className="flex items-center gap-3 mb-2">{isGuest ? <Sparkles className="text-amber-500 shrink-0" size={16} /> : <div className="w-8 h-8 rounded-full bg-blue-600 flex items-center justify-center text-white font-black text-[10px] shrink-0">{session?.user?.email?.substring(0,2).toUpperCase()}</div>}<div className="flex-1 min-w-0"><p className="text-[10px] font-black text-slate-600 dark:text-slate-300 uppercase tracking-widest truncate">{isGuest ? 'Modo Local' : session?.user?.email}</p><div className="flex items-center gap-1.5 mt-0.5">{isGuest ? <p className="text-[8px] text-amber-500 font-bold uppercase">Sin Sincronizar</p> : syncError ? <button onClick={retrySync} className="flex items-center gap-1 group"><CloudOff size={10} className="text-rose-500" /><p className="text-[8px] text-rose-500 font-bold uppercase group-hover:underline">Error de Red (Offline)</p></button> : isSyncing ? <><RefreshCw size={8} className="animate-spin text-blue-500" /><p className="text-[8px] text-blue-500 font-bold uppercase">Sincronizando...</p></> : <button onClick={manualRefresh} className="flex items-center gap-1 group hover:bg-slate-200 dark:hover:bg-slate-700 px-1.5 py-0.5 rounded transition-all"><CloudCheck size={10} className="text-emerald-500" /><p className="text-[8px] text-emerald-500 font-bold uppercase group-hover:underline">Sincronizado</p><RefreshCw size={8} className="text-slate-400 ml-1 opacity-0 group-hover:opacity-100" /></button>}</div></div></div>
-             {syncError && !isGuest && <div className="flex items-center gap-2 mt-2 p-2 bg-rose-50 dark:bg-rose-900/20 rounded-xl border border-rose-100 dark:border-rose-900/40"><AlertTriangle className="text-rose-600" size={12} /><p className="text-[8px] text-rose-600 font-medium">Tus cambios se han guardado localmente.</p></div>}
-             {!isGuest && <button onClick={forceResync} className="w-full mt-2 flex items-center justify-center gap-2 py-2 bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors"><RefreshCcw size={12} /> Sincronizar Nube</button>}
-        </div>
+
         <nav className="flex-1 px-4 space-y-1 overflow-y-auto custom-scrollbar">{menuItems.map((item) => (<Link key={item.path} to={item.path} onClick={onClose} className={`flex items-center gap-3 px-4 py-3 rounded-xl transition-all duration-200 ${location.pathname === item.path ? 'bg-blue-600 text-white font-semibold shadow-lg shadow-blue-100 dark:shadow-none' : 'text-slate-500 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800 hover:text-slate-800 dark:hover:text-slate-200'}`}><span className="shrink-0">{item.icon}</span><span className="text-sm">{item.label}</span></Link>))}</nav>
-        <BackupBox />
-        <div className="p-4 border-t border-slate-100 dark:border-slate-800"><button onClick={onLogout} className="w-full flex items-center gap-3 px-4 py-3 text-slate-500 hover:text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-900/20 rounded-xl transition-all font-bold text-sm"><LogOut size={20} /> Salir de la App</button></div>
+
+        {/* Cuenta, sincronizacion y copias: una sola fila que abre el panel. */}
+        <div className="p-3 border-t border-slate-100 dark:border-slate-800">
+          <button
+            onClick={() => setPanelAbierto(true)}
+            className="w-full flex items-center gap-3 p-2.5 rounded-2xl hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors text-left group"
+          >
+            <div className={`relative w-9 h-9 rounded-xl flex items-center justify-center shrink-0 font-black text-[10px] ${isGuest ? 'bg-amber-100 dark:bg-amber-900/40 text-amber-600' : 'bg-blue-600 text-white'}`}>
+              {isGuest ? <Sparkles size={16} /> : email.substring(0, 2).toUpperCase()}
+              <span className={`absolute -bottom-0.5 -right-0.5 w-3 h-3 rounded-full border-2 border-white dark:border-slate-900 ${sync.color}`} />
+            </div>
+            <div className="flex-1 min-w-0">
+              <p className="text-[11px] font-bold text-slate-700 dark:text-slate-200 truncate">{isGuest ? 'Modo Local' : email}</p>
+              <p className={`text-[10px] font-medium ${sync.tono}`}>{sync.texto}</p>
+            </div>
+            <ChevronRight size={16} className="text-slate-300 dark:text-slate-600 group-hover:text-slate-500 shrink-0" />
+          </button>
+        </div>
       </aside>
+
+      {panelAbierto && <AccountPanel onClose={() => setPanelAbierto(false)} onLogout={onLogout} session={session} />}
     </>
   );
 };
