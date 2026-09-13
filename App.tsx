@@ -128,7 +128,6 @@ interface FinanceContextType extends FinanceState {
   retrySync: () => void;
   manualRefresh: () => Promise<void>;
   saveData: () => Promise<void>;
-  forceResync: () => Promise<void>;
 
   // Undo system
   startUndoBatch: () => void;
@@ -420,6 +419,24 @@ const App: React.FC = () => {
         15000,
       );
       if (error || !data?.state) throw error || new Error('version vacia');
+
+      // Antes de sustituir nada, se archiva lo que hay ahora. Restaurar deja de
+      // ser irreversible: si te has equivocado de version, la de este momento
+      // sigue en el historial.
+      const actual = stateRef.current;
+      const resumenActual = summarize(actual);
+      if (resumenActual.transactions + resumenActual.accounts + resumenActual.savings > 0) {
+        await withTimeout<any>(
+          supabase.from('profile_versions').insert({
+            user_id: session.user.id,
+            state: actual,
+            tx_count: resumenActual.transactions,
+            reason: 'antes de restaurar',
+          }),
+          15000,
+        ).catch((e: any) => console.warn('[Historial] No se pudo archivar el estado actual:', e?.message || e));
+      }
+
       const recuperado = { ...INITIAL_DATA, ...data.state } as FinanceState;
       // Restaurar es una decision explicita: la guardia no debe estorbar aqui.
       overrideGuardRef.current = true;
@@ -529,22 +546,6 @@ const App: React.FC = () => {
       setIsSyncing(false); 
     }
   }, [session, isGuest, state, setIsSyncing, setSyncError]);
-
-  const forceResync = useCallback(async () => {
-    if (!session || isGuest) return;
-    setIsSyncing(true);
-    // Limpiar flags locales para forzar descarga desde la nube
-    safeSetItem(getDirtyKey(session.user.id), 'false');
-    safeSetItem(getTimestampKey(session.user.id), '0');
-    try {
-        await fetchUserData(session.user.id);
-    } catch(e) {
-        console.error("forceResync error:", e);
-        setSyncError(true);
-    } finally {
-        setIsSyncing(false);
-    }
-  }, [session, isGuest, fetchUserData]);
 
   const retrySync = useCallback(async () => await saveData(), [saveData]);
 
@@ -735,7 +736,6 @@ const App: React.FC = () => {
     retrySync,
     manualRefresh,
     saveData,
-    forceResync,
     
     importBudgetFromMonth: (sourceDate, targetDate) => setState(prev => {
       // Guardar snapshot para undo antes de importar
@@ -987,7 +987,7 @@ const App: React.FC = () => {
       const periods: string[] = Array.from(new Set(state.budgets.filter(b => isMonthKey(b.period)).map(b => b.period as string)));
       return periods.sort((a, b) => b.localeCompare(a));
     },
-  }), [state, isGuest, isSyncing, syncError, blockedWrite, confirmBlockedWrite, listVersions, restoreVersion, undoCount, budgetUndoCount, getAccountHistoricalBalance, getSavingHistoricalBalance, getNetWorthHistorical, periodIndex, getPeriodAggregate, viewIndex, amountView, hasSharedAccounts, getOwnedAccountBalance, loginAsGuest, retrySync, manualRefresh, saveData, forceResync, syncRefundsWithTransactions]);
+  }), [state, isGuest, isSyncing, syncError, blockedWrite, confirmBlockedWrite, listVersions, restoreVersion, undoCount, budgetUndoCount, getAccountHistoricalBalance, getSavingHistoricalBalance, getNetWorthHistorical, periodIndex, getPeriodAggregate, viewIndex, amountView, hasSharedAccounts, getOwnedAccountBalance, loginAsGuest, retrySync, manualRefresh, saveData, syncRefundsWithTransactions]);
 
   if (isAppInitializing) { 
     return (
@@ -1210,7 +1210,22 @@ const VersionHistory = () => {
  * guardado que destruye datos ya no es silencioso: se para y se pregunta.
  */
 const GuardBanner = () => {
-  const { blockedWrite, confirmBlockedWrite } = useFinance();
+  const finance = useFinance();
+  const { blockedWrite, confirmBlockedWrite } = finance;
+  // La salida de emergencia no deberia ser el camino mas facil: antes de dejar
+  // pasar un guardado que destruye datos, se ofrece llevarselos al disco.
+  const descargarAntesDeContinuar = () => {
+    const ahora = new Date();
+    const plano = {
+      accounts: finance.accounts, savings: finance.savings, refunds: finance.refunds,
+      transactions: finance.transactions, budgets: finance.budgets, challenges: finance.challenges,
+      extraSavings: finance.extraSavings, manualContributions: finance.manualContributions,
+      currentDate: finance.currentDate, viewMode: finance.viewMode,
+      dashboardLayout: finance.dashboardLayout, theme: finance.theme,
+      chatHistory: finance.chatHistory, chatLastDate: finance.chatLastDate,
+    };
+    descargarTexto(fullBackup(plano, ahora), backupFilename('finanzas-copia', 'json', ahora), 'application/json');
+  };
   if (!blockedWrite) return null;
   const { before, after, reason } = blockedWrite;
   return (
@@ -1243,10 +1258,16 @@ const GuardBanner = () => {
             Recuperar mis datos
           </button>
           <button
-            onClick={confirmBlockedWrite}
+            onClick={descargarAntesDeContinuar}
             className="px-5 py-2.5 rounded-xl bg-white dark:bg-slate-800 text-rose-700 dark:text-rose-300 text-[11px] font-bold border border-rose-200 dark:border-rose-800 hover:bg-rose-100 dark:hover:bg-slate-700 transition-colors"
           >
-            Sé lo que hago, guardar
+            Descargar copia primero
+          </button>
+          <button
+            onClick={confirmBlockedWrite}
+            className="px-5 py-2 text-rose-600/70 dark:text-rose-400/70 text-[10px] font-bold hover:text-rose-700 dark:hover:text-rose-300 transition-colors underline underline-offset-2"
+          >
+            Sé lo que hago, guardar igualmente
           </button>
         </div>
       </div>
@@ -1271,7 +1292,7 @@ const useSyncState = () => {
  * falta y no ocupa el resto del tiempo.
  */
 const AccountPanel = ({ onClose, onLogout, session }: { onClose: () => void; onLogout: () => void; session: any }) => {
-  const { isGuest, syncError, retrySync, manualRefresh, forceResync } = useFinance();
+  const { isGuest, syncError } = useFinance();
   const sync = useSyncState();
   const email = session?.user?.email || '';
 
@@ -1305,17 +1326,6 @@ const AccountPanel = ({ onClose, onLogout, session }: { onClose: () => void; onL
             <p className="text-[11px] text-rose-700 dark:text-rose-300 leading-relaxed">
               No se ha podido contactar con el servidor. Tus cambios están guardados en este dispositivo y subirán solos al recuperar la conexión.
             </p>
-          </div>
-        )}
-
-        {!isGuest && (
-          <div className="px-6 pb-5 grid grid-cols-2 gap-2">
-            <button onClick={() => { syncError ? retrySync() : manualRefresh(); }} className="flex items-center justify-center gap-2 py-3 bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors">
-              <RefreshCw size={12} /> Actualizar
-            </button>
-            <button onClick={forceResync} className="flex items-center justify-center gap-2 py-3 bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors">
-              <RefreshCcw size={12} /> Traer de la nube
-            </button>
           </div>
         )}
 
