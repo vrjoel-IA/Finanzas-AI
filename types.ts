@@ -9,6 +9,11 @@ export interface Account {
   currentBalance: number;
   color: string;
   emoji?: string;
+  // Titularidad parcial (cuenta o hucha compartida, p.ej. con la pareja).
+  // Ausente = 100% tuya, que es como se comportaba todo hasta ahora.
+  // Solo afecta a las vistas de analisis: el saldo y los movimientos se
+  // registran siempre integros para que cuadren con el extracto del banco.
+  ownershipPercent?: number;
 }
 
 export interface Saving {
@@ -20,6 +25,11 @@ export interface Saving {
   growthRate?: number;
   color: string;
   emoji?: string;
+  // Titularidad parcial (cuenta o hucha compartida, p.ej. con la pareja).
+  // Ausente = 100% tuya, que es como se comportaba todo hasta ahora.
+  // Solo afecta a las vistas de analisis: el saldo y los movimientos se
+  // registran siempre integros para que cuadren con el extracto del banco.
+  ownershipPercent?: number;
 }
 
 export interface Refund {
