@@ -107,6 +107,9 @@ function harness(response) {
     getSavingHistoricalBalance: () => 0,
     getNetWorthHistorical: () => 480,
     setPeriod: () => {}, setViewMode: () => {}, toggleTheme: () => {},
+    // Aura recibe los presupuestos ya resueltos, con la misma herencia que ve el
+    // usuario: si no, daria cifras distintas a las de la pantalla.
+    getEffectiveBudgets: () => state.budgets,
     deleteBudget: id => writes.push(['deleteBudget', id]),
     importBudgetFromMonth: (f, t) => writes.push(['importBudget', [f, t]]),
     updateTransaction: v => writes.push(['updateTransaction', v]),

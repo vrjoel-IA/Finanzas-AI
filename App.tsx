@@ -13,6 +13,12 @@ import { FinanceState, Account, Saving, Refund, Transaction, Budget, AIChallenge
 import { INITIAL_DATA } from './constants';
 import { supabase } from './services/supabase';
 import { syncRefundsWithTransactions as syncRefunds } from './services/refunds';
+import { buildPeriodIndex, aggregatePeriod } from './services/periodIndex';
+import type { PeriodIndex, PeriodAggregate } from './services/periodIndex';
+import { buildIndexWeights, hasSharedEntities, ownershipWeight } from './services/ownership';
+import { resolveEffectiveBudgets, materializeBudgets } from './services/budgetPlan';
+import type { EffectiveBudget } from './services/budgetPlan';
+import { isMonthKey, normalizePeriodForView } from './services/periods';
 
 // Componentes de vistas
 import Dashboard from './components/Dashboard';
@@ -79,7 +85,23 @@ interface FinanceContextType extends FinanceState {
   toggleTheme: () => void;
   updateChatHistory: (history: ChatMessage[]) => void;
   importBudgetFromMonth: (sourceDate: string, targetDate: string) => void;
-  getEffectiveBudgets: (targetDate: string) => Budget[];
+  getEffectiveBudgets: (targetDate: string) => EffectiveBudget[];
+  /** Convierte presupuestos heredados en propios del mes. Unica escritura del sistema de herencia. */
+  materializeBudgetsForPeriod: (targetDate: string, categories: string[] | 'all') => void;
+
+  // Capa de analisis: un unico recorrido sobre las transacciones, compartido por
+  // comparativas, anillo de categorias, graficos y proyeccion realista. Es solo
+  // lectura: no escribe nada ni sustituye a los calculos ya existentes.
+  periodIndex: PeriodIndex;
+  getPeriodAggregate: (key: string) => PeriodAggregate;
+
+  // Cuenta conjunta. El libro contable (saldos, lista de movimientos) siempre va
+  // integro; `viewIndex` es el que respeta el selector de importes.
+  viewIndex: PeriodIndex;
+  amountView: 'full' | 'mine';
+  setAmountView: (view: 'full' | 'mine') => void;
+  hasSharedAccounts: boolean;
+  getOwnedAccountBalance: (accountId: string, dateStr: string) => number;
   
   // Wealth Projection Methods
   addExtraSaving: (e: Omit<ExtraSaving, 'id'>) => void;
@@ -121,6 +143,16 @@ const App: React.FC = () => {
   const [isGuest, setIsGuest] = useState(false);
   const [state, setState] = useState<FinanceState>(INITIAL_DATA as any);
   const [isMenuOpen, setIsMenuOpen] = useState(false);
+  // Selector de importes de las cuentas compartidas. Vive en localStorage y NO en
+  // FinanceState: es una preferencia de este dispositivo, y meterla en el estado
+  // haria que cada vez que se cambia se subiera el documento entero a la nube.
+  const [amountView, setAmountViewState] = useState<'full' | 'mine'>(
+    () => (safeGetItem('finanzas_pro_amount_view') === 'full' ? 'full' : 'mine'),
+  );
+  const setAmountView = useCallback((view: 'full' | 'mine') => {
+    setAmountViewState(view);
+    safeSetItem('finanzas_pro_amount_view', view);
+  }, []);
   const [isAppInitializing, setIsAppInitializing] = useState(true); 
   const [isSyncing, setIsSyncing] = useState(false); 
   const [syncError, setSyncError] = useState(false); 
@@ -144,7 +176,10 @@ const App: React.FC = () => {
   const [undoCount, setUndoCount] = useState(0);
 
   // Budget Undo System
-  const budgetUndoStackRef = useRef<{budgets: Budget[], label: string}[]>([]);
+  const budgetUndoStackRef = useRef<{budgets: Budget[], label: string, period?: string}[]>([]);
+  // Ultimo mes visitado, para volver a el al salir de la vista anual. Es solo de
+  // sesion: no se persiste ni viaja a la nube.
+  const lastMonthKeyRef = useRef<string | undefined>(undefined);
   const [budgetUndoCount, setBudgetUndoCount] = useState(0);
 
   // CLAVES DE ALMACENAMIENTO LOCAL
@@ -500,6 +535,34 @@ const App: React.FC = () => {
     return accountsTotal + savingsTotal;
   }, [state.accounts, state.savings, getAccountHistoricalBalance, getSavingHistoricalBalance]);
 
+  // Indice de analisis. Depende solo de las transacciones, asi que se reconstruye
+  // unicamente cuando cambia el historial, no al cambiar de mes ni de tema.
+  // Los calculos que ya existian (saldos historicos, metricas del dashboard) NO
+  // pasan por aqui: siguen exactamente igual que antes.
+  const periodIndex = useMemo(() => buildPeriodIndex(state.transactions), [state.transactions]);
+
+  // Titularidad parcial. El indice ponderado solo se construye si de verdad hay
+  // algo compartido; en el caso normal se reutiliza el mismo objeto.
+  const hasSharedAccounts = useMemo(
+    () => hasSharedEntities(state.accounts, state.savings),
+    [state.accounts, state.savings],
+  );
+  const ownedIndex = useMemo(() => {
+    if (!hasSharedAccounts) return periodIndex;
+    return buildPeriodIndex(state.transactions, buildIndexWeights(state.accounts, state.savings));
+  }, [hasSharedAccounts, periodIndex, state.transactions, state.accounts, state.savings]);
+  const viewIndex = amountView === 'mine' ? ownedIndex : periodIndex;
+
+  const getOwnedAccountBalance = useCallback((accountId: string, dateStr: string) => {
+    const account = state.accounts.find(a => a.id === accountId);
+    return getAccountHistoricalBalance(accountId, dateStr) * ownershipWeight(account?.ownershipPercent);
+  }, [state.accounts, getAccountHistoricalBalance]);
+
+  const getPeriodAggregate = useCallback(
+    (key: string) => aggregatePeriod(periodIndex, key),
+    [periodIndex],
+  );
+
   const contextValue = useMemo<FinanceContextType>(() => ({
     ...state,
     extraSavings: state.extraSavings || [],
@@ -507,6 +570,13 @@ const App: React.FC = () => {
     getAccountHistoricalBalance,
     getSavingHistoricalBalance,
     getNetWorthHistorical, 
+    periodIndex,
+    getPeriodAggregate,
+    viewIndex,
+    amountView,
+    setAmountView,
+    hasSharedAccounts,
+    getOwnedAccountBalance,
     isGuest,
     isSyncing,
     syncError,
@@ -519,28 +589,47 @@ const App: React.FC = () => {
     importBudgetFromMonth: (sourceDate, targetDate) => setState(prev => {
       // Guardar snapshot para undo antes de importar
       const currentPeriodBudgets = prev.budgets.filter(bg => bg.period === targetDate);
-      budgetUndoStackRef.current.push({ budgets: currentPeriodBudgets, label: `Importar de ${sourceDate}` });
+      budgetUndoStackRef.current.push({ budgets: currentPeriodBudgets, label: `Importar de ${sourceDate}`, period: targetDate });
       if (budgetUndoStackRef.current.length > 20) budgetUndoStackRef.current.shift();
       setBudgetUndoCount(budgetUndoStackRef.current.length);
 
-      const sourceBudgets = prev.budgets.filter(b => b.period === sourceDate);
-      const newBudgets = sourceBudgets.map(b => ({
-        ...b,
-        id: 'budget_' + Date.now() + Math.random(),
-        period: targetDate,
-        spent: 0 
-      }));
-      const filteredBudgets = prev.budgets.filter(b => b.period !== targetDate);
-      return { ...prev, budgets: [...filteredBudgets, ...newBudgets] };
+      // Fusion por categoria en vez de borrado: antes esto eliminaba en silencio
+      // todo lo que ya hubiera en el mes destino.
+      const sourceBudgets = prev.budgets.filter(b => b.period === sourceDate && isMonthKey(b.period));
+      const existing = new Set(
+        prev.budgets.filter(b => b.period === targetDate).map(b => b.category + '|' + (b.type || 'expense')),
+      );
+      const newBudgets = sourceBudgets
+        .filter(b => !existing.has(b.category + '|' + (b.type || 'expense')))
+        .map(b => ({
+          ...b,
+          id: 'budget_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8),
+          period: targetDate,
+          spent: 0
+        }));
+      return { ...prev, budgets: [...prev.budgets, ...newBudgets] };
     }),
-    getEffectiveBudgets: (targetDate) => {
-      // Presupuestos del periodo + legacy (sin periodo)
-      const periodSpecific = state.budgets.filter(b => b.period === targetDate);
-      const legacy = state.budgets.filter(b => !b.period);
-      const specificCategories = new Set(periodSpecific.map(b => b.category));
-      const uniqueLegacy = legacy.filter(b => !specificCategories.has(b.category));
-      return [...periodSpecific, ...uniqueLegacy];
-    },
+    // Los presupuestos aplicables a un mes se CALCULAN, no se copian. Antes la
+    // unica herencia vivia en un useEffect de la pantalla de Presupuesto, que
+    // escribia datos con solo navegar: por eso el dashboard mostraba un mes vacio
+    // hasta que entrabas ahi, y entonces aparecian de golpe.
+    getEffectiveBudgets: (targetDate) => resolveEffectiveBudgets(state.budgets, targetDate, periodIndex),
+
+    materializeBudgetsForPeriod: (targetDate, categories) => setState(prev => {
+      if (!isMonthKey(targetDate)) return prev;
+      const next = materializeBudgets(
+        prev.budgets,
+        targetDate,
+        categories,
+        () => 'budget_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8),
+        periodIndex,
+      );
+      if (next === prev.budgets) return prev;
+      budgetUndoStackRef.current.push({ budgets: prev.budgets.filter(bg => bg.period === targetDate), label: 'Personalizar mes', period: targetDate });
+      if (budgetUndoStackRef.current.length > 20) budgetUndoStackRef.current.shift();
+      setBudgetUndoCount(budgetUndoStackRef.current.length);
+      return { ...prev, budgets: next };
+    }),
 
     addTransaction: (t, myPart) => {
       const id = 'tx_' + Math.random().toString(36).substr(2, 9);
@@ -618,9 +707,15 @@ const App: React.FC = () => {
     },
     addBudget: (b) => setState(prev => {
       const period = b.period || prev.currentDate;
+      // En vista anual currentDate es 'YYYY'. Un presupuesto con ese periodo no
+      // aparece en ningun mes: mejor no crearlo que crearlo invisible.
+      if (!isMonthKey(period)) {
+        console.warn('[Presupuestos] Selecciona un mes concreto para crear un presupuesto.');
+        return prev;
+      }
       // Guardar snapshot para undo
       const currentPeriodBudgets = prev.budgets.filter(bg => bg.period === period);
-      budgetUndoStackRef.current.push({ budgets: currentPeriodBudgets, label: `Añadir ${b.category}` });
+      budgetUndoStackRef.current.push({ budgets: currentPeriodBudgets, label: `Añadir ${b.category}`, period });
       if (budgetUndoStackRef.current.length > 20) budgetUndoStackRef.current.shift();
       setBudgetUndoCount(budgetUndoStackRef.current.length);
 
@@ -633,21 +728,23 @@ const App: React.FC = () => {
       return { ...prev, budgets: [...prev.budgets, { ...b, id: 'budget_' + Date.now(), spent: 0, period } as Budget] };
     }),
     updateBudget: (b) => setState(prev => {
-      const period = b.period || prev.currentDate;
-      // Guardar snapshot para undo
+      // Se respeta el periodo que ya tuviera. Antes se le estampaba el mes actual,
+      // asi que editar un presupuesto sin periodo lo secuestraba para ese mes y
+      // desaparecia de todos los demas.
+      const period = b.period;
       const currentPeriodBudgets = prev.budgets.filter(bg => bg.period === period);
-      budgetUndoStackRef.current.push({ budgets: currentPeriodBudgets, label: `Editar ${b.category}` });
+      budgetUndoStackRef.current.push({ budgets: currentPeriodBudgets, label: `Editar ${b.category}`, period });
       if (budgetUndoStackRef.current.length > 20) budgetUndoStackRef.current.shift();
       setBudgetUndoCount(budgetUndoStackRef.current.length);
 
-      return { ...prev, budgets: prev.budgets.map(bg => bg.id === b.id ? { ...b, period: period } : bg) };
+      return { ...prev, budgets: prev.budgets.map(bg => bg.id === b.id ? { ...b, period } : bg) };
     }),
     deleteBudget: (id) => setState(prev => {
       const target = prev.budgets.find(b => b.id === id);
       if (target) {
-        const period = target.period || prev.currentDate;
+        const period = target.period;
         const currentPeriodBudgets = prev.budgets.filter(bg => bg.period === period);
-        budgetUndoStackRef.current.push({ budgets: currentPeriodBudgets, label: `Eliminar ${target.category}` });
+        budgetUndoStackRef.current.push({ budgets: currentPeriodBudgets, label: `Eliminar ${target.category}`, period });
         if (budgetUndoStackRef.current.length > 20) budgetUndoStackRef.current.shift();
         setBudgetUndoCount(budgetUndoStackRef.current.length);
       }
@@ -663,7 +760,14 @@ const App: React.FC = () => {
       setState(prev => ({ ...prev, currentDate: newDateStr }));
     },
     setPeriod: (dateStr) => setState(prev => ({ ...prev, currentDate: dateStr })),
-    setViewMode: (mode) => setState(prev => ({ ...prev, viewMode: mode })),
+    setViewMode: (mode) => setState(prev => {
+      // Sin normalizar, pasar a anual dejaba currentDate en 'YYYY-MM' (la cabecera
+      // imprimia "Año 2026-10") y volver a mes lo dejaba en 'YYYY', con lo que la
+      // flecha de periodo saltaba a enero.
+      const currentDate = normalizePeriodForView(prev.currentDate, mode, lastMonthKeyRef.current);
+      if (isMonthKey(prev.currentDate)) lastMonthKeyRef.current = prev.currentDate;
+      return { ...prev, viewMode: mode, currentDate };
+    }),
     updateLayout: (newLayout) => setState(prev => ({ ...prev, dashboardLayout: newLayout })),
     setChallenges: (challenges) => setState(prev => ({ ...prev, challenges })),
     toggleTheme: () => setState(prev => ({ ...prev, theme: prev.theme === 'light' ? 'dark' : 'light' })),
@@ -717,8 +821,10 @@ const App: React.FC = () => {
       setBudgetUndoCount(budgetUndoStackRef.current.length);
       if (!lastSnapshot) return null;
       setState(prev => {
-        // Determinar el periodo del snapshot
-        const period = lastSnapshot.budgets.length > 0 ? lastSnapshot.budgets[0].period : prev.currentDate;
+        // El periodo viene guardado en el propio snapshot. Antes se deducia del
+        // primer presupuesto y, si el snapshot estaba vacio, se usaba el mes en
+        // pantalla: deshacer despues de cambiar de mes borraba el mes equivocado.
+        const period = lastSnapshot.period !== undefined ? lastSnapshot.period : prev.currentDate;
         // Eliminar TODOS los presupuestos del periodo actual y reemplazar con el snapshot
         const otherBudgets = prev.budgets.filter(b => b.period !== period);
         return { ...prev, budgets: [...otherBudgets, ...lastSnapshot.budgets] };
@@ -727,10 +833,10 @@ const App: React.FC = () => {
     },
     budgetUndoCount,
     getPeriodsWithBudgets: () => {
-      const periods: string[] = Array.from(new Set(state.budgets.filter(b => b.period).map(b => b.period as string)));
+      const periods: string[] = Array.from(new Set(state.budgets.filter(b => isMonthKey(b.period)).map(b => b.period as string)));
       return periods.sort((a, b) => b.localeCompare(a));
     },
-  }), [state, isGuest, isSyncing, syncError, undoCount, budgetUndoCount, getAccountHistoricalBalance, getSavingHistoricalBalance, getNetWorthHistorical, loginAsGuest, retrySync, manualRefresh, saveData, forceResync, syncRefundsWithTransactions]);
+  }), [state, isGuest, isSyncing, syncError, undoCount, budgetUndoCount, getAccountHistoricalBalance, getSavingHistoricalBalance, getNetWorthHistorical, periodIndex, getPeriodAggregate, viewIndex, amountView, hasSharedAccounts, getOwnedAccountBalance, loginAsGuest, retrySync, manualRefresh, saveData, forceResync, syncRefundsWithTransactions]);
 
   if (isAppInitializing) { 
     return (
@@ -795,7 +901,7 @@ const Sidebar = ({ isOpen, onClose, onLogout, isGuest, session }: { isOpen: bool
 };
 
 const Header = ({ onMenuClick }: { onMenuClick: () => void }) => {
-  const { currentDate, changePeriod, setPeriod, viewMode, setViewMode, theme, toggleTheme } = useFinance();
+  const { currentDate, changePeriod, setPeriod, viewMode, setViewMode, theme, toggleTheme, amountView, setAmountView, hasSharedAccounts } = useFinance();
   const monthNames = ["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"];
   const [isPeriodDropdownOpen, setIsPeriodDropdownOpen] = useState(false);
   const currentFormatted = useMemo(() => {
@@ -812,7 +918,15 @@ const Header = ({ onMenuClick }: { onMenuClick: () => void }) => {
           </div>
         </div>
       </div>
-      <button onClick={toggleTheme} className="p-2.5 rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 shadow-sm transition-all">{theme === 'light' ? <Moon size={20} /> : <Sun size={20} />}</button>
+      <div className="flex items-center gap-2">
+        {hasSharedAccounts && (
+          <div className="flex items-center gap-1 bg-slate-100 dark:bg-slate-800 p-1 rounded-xl shadow-inner" title="En las cuentas compartidas, elige si ver el importe completo de la cuenta o solo la parte que te corresponde.">
+            <button onClick={() => setAmountView('mine')} className={`px-2.5 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-wider transition-all ${amountView === 'mine' ? 'bg-white dark:bg-slate-700 shadow-sm text-blue-600 dark:text-blue-400' : 'text-slate-400 dark:text-slate-500'}`}>Mi parte</button>
+            <button onClick={() => setAmountView('full')} className={`px-2.5 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-wider transition-all ${amountView === 'full' ? 'bg-white dark:bg-slate-700 shadow-sm text-blue-600 dark:text-blue-400' : 'text-slate-400 dark:text-slate-500'}`}>Completo</button>
+          </div>
+        )}
+        <button onClick={toggleTheme} className="p-2.5 rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 shadow-sm transition-all">{theme === 'light' ? <Moon size={20} /> : <Sun size={20} />}</button>
+      </div>
     </header>
   );
 };
