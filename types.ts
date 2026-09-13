@@ -69,9 +69,21 @@ export interface Budget {
   limit: number;
   icon: string;
   spent: number;
-  type: 'income' | 'expense';
+  // 'saving' es un objetivo de aportacion mensual a una hucha (savingId).
+  type: 'income' | 'expense' | 'saving';
   color: string; // Color personalizado para la categoría
   period?: string; // YYYY-MM
+  savingId?: string;
+}
+
+/** Informe de Aura guardado para un periodo. Solo se escribe al pedirlo el usuario. */
+export interface AuraReport {
+  kind: 'progress' | 'summary' | 'future';
+  generatedAt: string;
+  txCount: number;
+  titular: string;
+  puntos: string[];
+  consejo: string;
 }
 
 export interface AIChallenge {
@@ -111,4 +123,8 @@ export interface FinanceState {
   theme: 'light' | 'dark';
   chatHistory: ChatMessage[];
   chatLastDate: string; // YYYY-MM-DD
+  // Categorias retiradas a mano de un mes (periodo -> claves de presupuesto), para
+  // que no reaparezcan heredadas. Opcional: los estados antiguos no lo tienen.
+  budgetExclusions?: Record<string, string[]>;
+  auraReports?: Record<string, AuraReport>;
 }

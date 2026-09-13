@@ -95,7 +95,7 @@ export function budgetsToCsv(state: Partial<FinanceState>): string {
     budgets.map(b => [
       b.period || '(todos los meses)',
       b.category,
-      b.type === 'income' ? 'Ingreso' : 'Gasto',
+      b.type === 'income' ? 'Ingreso' : b.type === 'saving' ? 'Ahorro' : 'Gasto',
       formatAmount(b.limit),
     ]),
   );

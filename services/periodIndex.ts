@@ -38,6 +38,9 @@ export interface MonthAggregate extends PeriodAggregate {
   netFlowByAccount: Record<string, number>;
   /** Variacion de la hucha: una aportacion (expense) suma, una retirada resta. */
   netFlowBySaving: Record<string, number>;
+  /** Aportaciones y retiradas brutas por hucha, para los objetivos de ahorro. */
+  depositsBySaving: Record<string, number>;
+  withdrawalsBySaving: Record<string, number>;
 }
 
 export interface PeriodIndex {
@@ -81,6 +84,8 @@ const emptyMonth = (key: MonthKey): MonthAggregate => {
   const base = emptyAggregate(key) as MonthAggregate;
   base.netFlowByAccount = {};
   base.netFlowBySaving = {};
+  base.depositsBySaving = {};
+  base.withdrawalsBySaving = {};
   return base;
 };
 
@@ -151,6 +156,8 @@ export function buildPeriodIndex(transactions: Transaction[], weights?: IndexWei
       const savingDelta = base * weightOf(weights && weights.savings, t.savingId);
       agg.netFlowBySaving[t.savingId] =
         (agg.netFlowBySaving[t.savingId] || 0) + (t.type === 'expense' ? savingDelta : -savingDelta);
+      const bucket = t.type === 'expense' ? agg.depositsBySaving : agg.withdrawalsBySaving;
+      bucket[t.savingId] = (bucket[t.savingId] || 0) + savingDelta;
     }
 
     switch (classifyTransaction(t)) {
@@ -304,11 +311,55 @@ export function categorySpent(agg: PeriodAggregate, category: string, type: 'inc
   return type === 'income' ? bucket.income : bucket.expense - bucket.refunded;
 }
 
-/** Categorias ordenadas por gasto neto descendente. */
-export function topExpenseCategories(agg: PeriodAggregate, limit: number): { category: string; amount: number }[] {
+/** Categorias de gasto (neto) o de ingreso ordenadas de mayor a menor. */
+export function topCategories(
+  agg: PeriodAggregate,
+  type: 'income' | 'expense',
+  limit: number,
+): { category: string; amount: number }[] {
   const rows = Object.keys(agg.byCategory)
-    .map(category => ({ category, amount: categorySpent(agg, category, 'expense') }))
+    .map(category => ({ category, amount: categorySpent(agg, category, type) }))
     .filter(row => row.amount > 0)
     .sort((a, b) => b.amount - a.amount);
   return limit > 0 ? rows.slice(0, limit) : rows;
+}
+
+/** Categorias ordenadas por gasto neto descendente. */
+export function topExpenseCategories(agg: PeriodAggregate, limit: number): { category: string; amount: number }[] {
+  return topCategories(agg, 'expense', limit);
+}
+
+/**
+ * Las cuatro cifras de un periodo con las MISMAS definiciones que el widget
+ * principal del dashboard. La comparativa y la grafica mes a mes usaban el
+ * resultado del mes como "Ahorro", que no es lo que el usuario ve arriba:
+ *  - ingresos: ingreso real mas lo retirado de huchas (vuelve a la liquidez),
+ *  - gastos: gasto neto de reembolsos, nunca negativo,
+ *  - ahorro: dinero movido a huchas,
+ *  - resultado: variacion de liquidez del periodo.
+ */
+export function periodHeadline(agg: PeriodAggregate): { income: number; expense: number; saving: number; result: number } {
+  return {
+    income: agg.baseIncome + agg.savingWithdrawals,
+    expense: Math.max(0, agg.netExpense),
+    saving: agg.savingDeposits,
+    result: agg.netResult,
+  };
+}
+
+/** Aportado y retirado de una hucha en un mes o un anio. */
+export function savingFlow(index: PeriodIndex, savingId: string, key: PeriodKey): { deposits: number; withdrawals: number } {
+  const flow = { deposits: 0, withdrawals: 0 };
+  const add = (month: MonthAggregate | undefined) => {
+    if (!month) return;
+    flow.deposits += (month.depositsBySaving && month.depositsBySaving[savingId]) || 0;
+    flow.withdrawals += (month.withdrawalsBySaving && month.withdrawalsBySaving[savingId]) || 0;
+  };
+  if (isMonthKey(key)) add(index.months[key]);
+  else if (isYearKey(key)) {
+    for (let i = 0; i < index.monthKeys.length; i++) {
+      if (index.monthKeys[i].slice(0, 4) === key) add(index.months[index.monthKeys[i]]);
+    }
+  }
+  return flow;
 }

@@ -7,6 +7,7 @@ const { buildPeriodIndex } = periodIndex;
 const {
   resolveEffectiveBudgets, materializeBudgets, findInheritanceSource,
   isNormalMonth, hasOwnBudgets, listOrphanBudgets, budgetKey,
+  saveBudgetInMonth, removeBudgetFromMonth, budgetStatus,
 } = budgetPlan;
 
 const budget = (over = {}) => ({
@@ -268,4 +269,153 @@ test('materializar sobre un periodo que no es un mes no cambia nada', () => {
   const budgets = [budget({ id: 'sep1', period: '2026-09' })];
   const index = buildPeriodIndex(normalMonth('2026-09'));
   assert.equal(materializeBudgets(budgets, '2026', 'all', () => 'n', index), budgets);
+});
+
+// ---------------------------------------------------------------------------
+// Editar y borrar directamente sobre un mes heredado
+// ---------------------------------------------------------------------------
+
+const idGen = () => { let n = 0; return () => 'nuevo' + (++n); };
+const changesOf = (b, over = {}) => ({
+  category: b.category, limit: b.limit, icon: b.icon, type: b.type, color: b.color, ...over,
+});
+
+test('una exclusion oculta el heredado y el antiguo, pero nunca un propio', () => {
+  const budgets = [
+    budget({ id: 'sep1', category: 'Ocio', period: '2026-09' }),
+    budget({ id: 'legacy', category: 'Regalos' }),
+    budget({ id: 'oct1', category: 'Transporte', period: '2026-10' }),
+  ];
+  const index = buildPeriodIndex(normalMonth('2026-09'));
+  const exclusions = { '2026-10': ['Ocio|expense', 'Regalos|expense', 'Transporte|expense'] };
+  const resolved = resolveEffectiveBudgets(budgets, '2026-10', index, exclusions);
+  assert.equal(sortedKeys(resolved), 'Transporte|expense');
+});
+
+test('una exclusion solo afecta a su mes', () => {
+  const budgets = [budget({ id: 'sep1', category: 'Ocio', period: '2026-09' })];
+  const index = buildPeriodIndex(normalMonth('2026-09'));
+  const exclusions = { '2026-10': ['Ocio|expense'] };
+  assert.equal(resolveEffectiveBudgets(budgets, '2026-09', index, exclusions).length, 1);
+  assert.equal(resolveEffectiveBudgets(budgets, '2026-11', index, exclusions).length, 1);
+});
+
+test('editar un heredado cambia solo este mes y lo deja completo', () => {
+  const budgets = [
+    budget({ id: 'sep1', category: 'Alimentacion', limit: 200, period: '2026-09' }),
+    budget({ id: 'sep2', category: 'Ocio', limit: 100, period: '2026-09' }),
+  ];
+  const before = JSON.stringify(budgets);
+  const index = buildPeriodIndex(normalMonth('2026-09'));
+  const ocio = byCategory(resolveEffectiveBudgets(budgets, '2026-10', index), 'Ocio');
+
+  const book = saveBudgetInMonth({ budgets, exclusions: {} }, '2026-10', ocio, changesOf(ocio, { limit: 150 }), idGen(), index);
+
+  assert.equal(JSON.stringify(budgets), before, 'la entrada ha cambiado');
+  assert.equal(JSON.stringify(book.budgets.filter(b => b.period === '2026-09')), before, 'septiembre debe quedar intacto');
+  const octubre = book.budgets.filter(b => b.period === '2026-10');
+  assert.equal(octubre.length, 2, 'el mes se materializa entero');
+  assert.equal(byCategory(octubre, 'Ocio').limit, 150);
+  assert.equal(byCategory(octubre, 'Alimentacion').limit, 200);
+});
+
+test('crear en un mes heredado no convierte el mes en una fuente parcial', () => {
+  const budgets = [
+    budget({ id: 'sep1', category: 'Alimentacion', period: '2026-09' }),
+    budget({ id: 'sep2', category: 'Ocio', period: '2026-09' }),
+  ];
+  const index = buildPeriodIndex([...normalMonth('2026-09'), ...normalMonth('2026-10')]);
+  const nuevo = { category: 'Gimnasio', limit: 40, icon: 'Dumbbell', type: 'expense', color: '#111' };
+  const book = saveBudgetInMonth({ budgets, exclusions: {} }, '2026-10', null, nuevo, idGen(), index);
+
+  const noviembre = resolveEffectiveBudgets(book.budgets, '2026-11', index, book.exclusions);
+  assert.equal(sortedKeys(noviembre), 'Alimentacion|expense, Gimnasio|expense, Ocio|expense');
+});
+
+test('borrar un heredado no reaparece y no toca el mes de origen', () => {
+  const budgets = [
+    budget({ id: 'sep1', category: 'Alimentacion', period: '2026-09' }),
+    budget({ id: 'sep2', category: 'Ocio', period: '2026-09' }),
+  ];
+  const before = JSON.stringify(budgets);
+  const index = buildPeriodIndex([...normalMonth('2026-09'), ...normalMonth('2026-10')]);
+  const ocio = byCategory(resolveEffectiveBudgets(budgets, '2026-10', index), 'Ocio');
+
+  const book = removeBudgetFromMonth({ budgets, exclusions: {} }, '2026-10', ocio, idGen(), index);
+
+  assert.equal(JSON.stringify(book.budgets.filter(b => b.period === '2026-09')), before);
+  assert.equal(sortedKeys(resolveEffectiveBudgets(book.budgets, '2026-10', index, book.exclusions)), 'Alimentacion|expense');
+  // Noviembre hereda de octubre, que ya no tiene Ocio: borrarla la borra de verdad.
+  assert.equal(sortedKeys(resolveEffectiveBudgets(book.budgets, '2026-11', index, book.exclusions)), 'Alimentacion|expense');
+});
+
+test('volver a crear una categoria borrada levanta su exclusion', () => {
+  const budgets = [budget({ id: 'sep2', category: 'Ocio', period: '2026-09' })];
+  const index = buildPeriodIndex(normalMonth('2026-09'));
+  const ocio = resolveEffectiveBudgets(budgets, '2026-10', index)[0];
+  const borrado = removeBudgetFromMonth({ budgets, exclusions: {} }, '2026-10', ocio, idGen(), index);
+  assert.equal(JSON.stringify(borrado.exclusions), JSON.stringify({ '2026-10': ['Ocio|expense'] }));
+
+  const recreado = saveBudgetInMonth(borrado, '2026-10', null, changesOf(ocio, { limit: 70 }), idGen(), index);
+  assert.equal(JSON.stringify(recreado.exclusions), '{}');
+  const resolved = resolveEffectiveBudgets(recreado.budgets, '2026-10', index, recreado.exclusions);
+  assert.equal(resolved.length, 1);
+  assert.equal(resolved[0].limit, 70);
+});
+
+test('renombrar un heredado no deja el nombre viejo heredado al lado', () => {
+  const budgets = [budget({ id: 'sep2', category: 'Ocio', period: '2026-09' })];
+  const index = buildPeriodIndex(normalMonth('2026-09'));
+  const ocio = resolveEffectiveBudgets(budgets, '2026-10', index)[0];
+  const book = saveBudgetInMonth({ budgets, exclusions: {} }, '2026-10', ocio, changesOf(ocio, { category: 'Salidas' }), idGen(), index);
+  assert.equal(sortedKeys(resolveEffectiveBudgets(book.budgets, '2026-10', index, book.exclusions)), 'Salidas|expense');
+});
+
+test('renombrar encima de otra categoria del mes no cambia nada', () => {
+  const budgets = [
+    budget({ id: 'oct1', category: 'Ocio', period: '2026-10' }),
+    budget({ id: 'oct2', category: 'Cine', period: '2026-10' }),
+  ];
+  const index = buildPeriodIndex(normalMonth('2026-10'));
+  const book = { budgets, exclusions: {} };
+  const result = saveBudgetInMonth(book, '2026-10', budgets[0], changesOf(budgets[0], { category: 'Cine' }), idGen(), index);
+  assert.equal(result, book);
+});
+
+test('editar en vista anual no escribe nada', () => {
+  const budgets = [budget({ id: 'ene', period: '2026-01' })];
+  const index = buildPeriodIndex(normalMonth('2026-01'));
+  const book = { budgets, exclusions: {} };
+  assert.equal(saveBudgetInMonth(book, '2026', null, changesOf(budgets[0]), idGen(), index), book);
+  assert.equal(removeBudgetFromMonth(book, '2026', budgets[0], idGen(), index), book);
+});
+
+test('estado de tarjeta: gasto pasado, ingreso u objetivo de ahorro logrado', () => {
+  assert.equal(budgetStatus({ type: 'expense', spent: 101, limit: 100 }), 'over');
+  assert.equal(budgetStatus({ type: 'expense', spent: 100, limit: 100 }), 'normal');
+  assert.equal(budgetStatus({ spent: 5, limit: 0 }), 'over', 'sin tipo cuenta como gasto');
+  assert.equal(budgetStatus({ type: 'income', spent: 100, limit: 100 }), 'achieved');
+  assert.equal(budgetStatus({ type: 'income', spent: 99, limit: 100 }), 'normal');
+  assert.equal(budgetStatus({ type: 'income', spent: 50, limit: 0 }), 'normal', 'sin objetivo no hay logro');
+  assert.equal(budgetStatus({ type: 'saving', spent: 200, limit: 200 }), 'achieved');
+});
+
+// ---------------------------------------------------------------------------
+// Objetivos de ahorro
+// ---------------------------------------------------------------------------
+
+test('un objetivo de ahorro hereda y se identifica por su hucha', () => {
+  const budgets = [
+    budget({ id: 's1', category: 'Viaje', type: 'saving', savingId: 'sav_1', limit: 200, period: '2026-09' }),
+    budget({ id: 'g1', category: 'Viaje', type: 'expense', limit: 300, period: '2026-09' }),
+    budget({ id: 'i1', category: 'Viaje', type: 'income', limit: 50, period: '2026-09' }),
+  ];
+  const index = buildPeriodIndex(normalMonth('2026-09'));
+  const resolved = resolveEffectiveBudgets(budgets, '2026-10', index);
+  assert.equal(sortedKeys(resolved), 'Viaje|expense, Viaje|income, saving|sav_1');
+  assert.equal(budgetKey({ type: 'saving', category: 'Nombre nuevo', savingId: 'sav_1' }), 'saving|sav_1');
+
+  const materialized = materializeBudgets(budgets, '2026-10', 'all', idGen(), index);
+  const copia = materialized.filter(b => b.period === '2026-10' && b.type === 'saving')[0];
+  assert.equal(copia.savingId, 'sav_1', 'la copia conserva la hucha');
 });

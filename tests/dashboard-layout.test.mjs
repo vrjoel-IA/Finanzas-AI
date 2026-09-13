@@ -20,14 +20,36 @@ test('se respeta el orden que el usuario haya elegido', () => {
 });
 
 test('los bloques nuevos aparecen al final en vez de quedar invisibles', () => {
-  // El caso real: un usuario con su layout guardado antes de que existieran
-  // la comparativa, el anillo y las tendencias.
+  // El caso real: un usuario con su layout guardado antes de que existiera
+  // la comparativa.
   const guardado = ['balance', 'challenges', 'savings', 'chart', 'accounts', 'budget'];
   const resultado = mergeLayout(guardado);
-  for (const clave of ['comparison', 'categories', 'trends']) {
-    assert.ok(resultado.indexOf(clave) !== -1, 'falta el bloque ' + clave);
-  }
+  assert.ok(resultado.indexOf('comparison') !== -1, 'falta el bloque comparison');
   assert.equal(resultado.length, DASHBOARD_BLOCKS.length);
+});
+
+test('los bloques antiguos se traducen a su sustituto en su misma posicion', () => {
+  const guardado = ['balance', 'challenges', 'savings', 'chart', 'accounts', 'budget'];
+  assert.equal(
+    asText(mergeLayout(guardado)),
+    asText(['balance', 'report', 'savings', 'evolution', 'accounts', 'budget', 'comparison']),
+  );
+});
+
+test('las dos graficas antiguas dan un unico bloque de evolucion, donde estaba la primera', () => {
+  const resultado = mergeLayout(['trends', 'balance', 'chart', 'categories', 'budget']);
+  assert.equal(resultado.filter(k => k === 'evolution').length, 1);
+  assert.equal(resultado[0], 'evolution');
+  assert.equal(resultado.indexOf('trends'), -1);
+  assert.equal(resultado.indexOf('chart'), -1);
+  assert.equal(resultado.indexOf('categories'), -1, 'el anillo vive ahora dentro de presupuestos');
+});
+
+test('un layout con los bloques antiguos y los nuevos no duplica nada', () => {
+  const resultado = mergeLayout(['report', 'challenges', 'evolution', 'chart']);
+  assert.equal(resultado.filter(k => k === 'report').length, 1);
+  assert.equal(resultado.filter(k => k === 'evolution').length, 1);
+  assert.equal(asText(mergeLayout(resultado)), asText(resultado));
 });
 
 test('no se pierde una clave desconocida', () => {

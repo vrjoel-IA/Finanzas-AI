@@ -58,13 +58,20 @@ export function buildAdvisorContext(input: AdvisorContextInput): string {
   // cifras que no coinciden con lo que el usuario esta mirando.
   const presupuestos = input.budgets
     .map(b => {
+      if (b.type === 'saving') {
+        // Objetivo mensual de una hucha: cuenta lo aportado a esa hucha.
+        const saved = inPeriod
+          .filter(t => t.type === 'expense' && !!b.savingId && t.savingId === b.savingId)
+          .reduce((total, t) => total + Number(t.amount || 0), 0);
+        return `- ${b.category} (objetivo de ahorro mensual): aportado ${money(saved)} de ${money(b.limit)}${pct(saved, b.limit)}`;
+      }
       const spent = spentByCategory.get(`${b.category}|${b.type}`) || 0;
       const label = b.type === 'income' ? 'ingresado' : 'gastado';
       return `- ${b.category} (${b.type === 'income' ? 'ingresos' : 'gastos'}): ${label} ${money(spent)} de ${money(b.limit)}${pct(spent, b.limit)}`;
     });
 
   // Categorias con movimiento pero sin presupuesto: suelen ser el punto ciego.
-  const presupuestadas = new Set(input.budgets.map(b => `${b.category}|${b.type}`));
+  const presupuestadas = new Set(input.budgets.filter(b => b.type !== 'saving').map(b => `${b.category}|${b.type}`));
   const sinPresupuesto = [...spentByCategory.entries()]
     .filter(([key]) => !presupuestadas.has(key))
     .map(([key, value]) => `- ${key.split('|')[0]} (${key.split('|')[1] === 'income' ? 'ingresos' : 'gastos'}): ${money(value)} sin presupuesto asignado`);

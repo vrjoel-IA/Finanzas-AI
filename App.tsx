@@ -9,7 +9,7 @@ import {
   ChevronLeft, ChevronRight, AlertTriangle, CloudOff,
   RefreshCcw, Download, ShieldCheck, History
 } from 'lucide-react';
-import { FinanceState, Account, Saving, Refund, Transaction, Budget, AIChallenge, ExtraSaving, ChatMessage } from './types';
+import { FinanceState, Account, Saving, Refund, Transaction, Budget, AIChallenge, ExtraSaving, ChatMessage, AuraReport } from './types';
 import { INITIAL_DATA } from './constants';
 import { supabase } from './services/supabase';
 import { syncRefundsWithTransactions as syncRefunds } from './services/refunds';
@@ -21,7 +21,7 @@ import type { DestructiveVerdict } from './services/stateGuard';
 import { buildPeriodIndex, aggregatePeriod } from './services/periodIndex';
 import type { PeriodIndex, PeriodAggregate } from './services/periodIndex';
 import { buildIndexWeights, hasSharedEntities, ownershipWeight } from './services/ownership';
-import { resolveEffectiveBudgets, materializeBudgets } from './services/budgetPlan';
+import { resolveEffectiveBudgets, materializeBudgets, saveBudgetInMonth, removeBudgetFromMonth, budgetKey } from './services/budgetPlan';
 import type { EffectiveBudget } from './services/budgetPlan';
 import { isMonthKey, normalizePeriodForView } from './services/periods';
 
@@ -35,6 +35,7 @@ import BudgetManager from './components/Budget';
 import AIAdvisor from './components/AIAdvisor';
 import WealthProjections from './components/WealthProjections';
 import Login from './components/Login';
+import { AuraVisionProvider, useAuraVision } from './components/AuraVision';
 
 // Helper para timeouts de red (Aumentado default a 10s)
 const withTimeout = <T,>(promise: PromiseLike<T>, ms: number = 10000): Promise<T> => {
@@ -72,7 +73,8 @@ interface FinanceContextType extends FinanceState {
   addAccount: (a: Omit<Account, 'id' | 'currentBalance'>) => void;
   updateAccount: (a: Account) => void;
   deleteAccount: (id: string) => void;
-  addSaving: (s: Omit<Saving, 'id'>) => void;
+  /** Devuelve el id de la hucha creada, para poder enlazarle un objetivo. */
+  addSaving: (s: Omit<Saving, 'id'>) => string;
   updateSaving: (s: Saving) => void;
   deleteSaving: (id: string) => void;
   addRefund: (r: Omit<Refund, 'id'>) => void;
@@ -87,12 +89,21 @@ interface FinanceContextType extends FinanceState {
   setViewMode: (mode: 'month' | 'year') => void;
   updateLayout: (newLayout: string[]) => void;
   setChallenges: (challenges: AIChallenge[]) => void;
+  /** Guarda el comentario de Aura de un periodo. Solo al pulsar el boton, nunca al navegar. */
+  saveAuraReport: (period: string, report: AuraReport) => void;
   toggleTheme: () => void;
   updateChatHistory: (history: ChatMessage[]) => void;
   importBudgetFromMonth: (sourceDate: string, targetDate: string) => void;
   getEffectiveBudgets: (targetDate: string) => EffectiveBudget[];
   /** Convierte presupuestos heredados en propios del mes. Unica escritura del sistema de herencia. */
   materializeBudgetsForPeriod: (targetDate: string, categories: string[] | 'all') => void;
+  /**
+   * Crea (original null) o edita un presupuesto del mes, propio o heredado. Nunca
+   * toca el mes de origen. Devuelve false si el cambio choca con otra categoria.
+   */
+  saveBudgetInPeriod: (period: string, original: Pick<Budget, 'type' | 'category' | 'savingId'> | null, changes: Omit<Budget, 'id' | 'spent' | 'period'>) => boolean;
+  /** Retira un presupuesto del mes, propio o heredado, sin tocar el mes de origen. */
+  removeBudgetFromPeriod: (period: string, original: Pick<Budget, 'type' | 'category' | 'savingId'>) => void;
 
   // Capa de analisis: un unico recorrido sobre las transacciones, compartido por
   // comparativas, anillo de categorias, graficos y proyeccion realista. Es solo
@@ -194,11 +205,26 @@ const App: React.FC = () => {
   const [undoCount, setUndoCount] = useState(0);
 
   // Budget Undo System
-  const budgetUndoStackRef = useRef<{budgets: Budget[], label: string, period?: string}[]>([]);
+  // Cada foto guarda los presupuestos Y las exclusiones del periodo: deshacer un
+  // borrado de algo heredado tiene que devolver las dos cosas a la vez.
+  const budgetUndoStackRef = useRef<{budgets: Budget[], exclusions?: string[], label: string, period?: string}[]>([]);
   // Ultimo mes visitado, para volver a el al salir de la vista anual. Es solo de
   // sesion: no se persiste ni viaja a la nube.
   const lastMonthKeyRef = useRef<string | undefined>(undefined);
   const [budgetUndoCount, setBudgetUndoCount] = useState(0);
+
+  const pushBudgetUndo = (prev: FinanceState, period: string | undefined, label: string) => {
+    const excluded = period && prev.budgetExclusions ? prev.budgetExclusions[period] : undefined;
+    budgetUndoStackRef.current.push({
+      budgets: prev.budgets.filter(bg => bg.period === period),
+      exclusions: Array.isArray(excluded) ? excluded.slice() : [],
+      label,
+      period,
+    });
+    if (budgetUndoStackRef.current.length > 20) budgetUndoStackRef.current.shift();
+    setBudgetUndoCount(budgetUndoStackRef.current.length);
+  };
+  const newBudgetId = () => 'budget_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
 
   // CLAVES DE ALMACENAMIENTO LOCAL
   const getBackupKey = (userId: string) => `finanzas_pro_backup_${userId}`;
@@ -739,10 +765,7 @@ const App: React.FC = () => {
     
     importBudgetFromMonth: (sourceDate, targetDate) => setState(prev => {
       // Guardar snapshot para undo antes de importar
-      const currentPeriodBudgets = prev.budgets.filter(bg => bg.period === targetDate);
-      budgetUndoStackRef.current.push({ budgets: currentPeriodBudgets, label: `Importar de ${sourceDate}`, period: targetDate });
-      if (budgetUndoStackRef.current.length > 20) budgetUndoStackRef.current.shift();
-      setBudgetUndoCount(budgetUndoStackRef.current.length);
+      pushBudgetUndo(prev, targetDate, `Importar de ${sourceDate}`);
 
       // Fusion por categoria en vez de borrado: antes esto eliminaba en silencio
       // todo lo que ya hubiera en el mes destino.
@@ -764,22 +787,40 @@ const App: React.FC = () => {
     // unica herencia vivia en un useEffect de la pantalla de Presupuesto, que
     // escribia datos con solo navegar: por eso el dashboard mostraba un mes vacio
     // hasta que entrabas ahi, y entonces aparecian de golpe.
-    getEffectiveBudgets: (targetDate) => resolveEffectiveBudgets(state.budgets, targetDate, periodIndex),
+    getEffectiveBudgets: (targetDate) => resolveEffectiveBudgets(state.budgets, targetDate, periodIndex, state.budgetExclusions),
 
     materializeBudgetsForPeriod: (targetDate, categories) => setState(prev => {
       if (!isMonthKey(targetDate)) return prev;
-      const next = materializeBudgets(
-        prev.budgets,
-        targetDate,
-        categories,
-        () => 'budget_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8),
-        periodIndex,
-      );
+      const next = materializeBudgets(prev.budgets, targetDate, categories, newBudgetId, periodIndex, prev.budgetExclusions);
       if (next === prev.budgets) return prev;
-      budgetUndoStackRef.current.push({ budgets: prev.budgets.filter(bg => bg.period === targetDate), label: 'Personalizar mes', period: targetDate });
-      if (budgetUndoStackRef.current.length > 20) budgetUndoStackRef.current.shift();
-      setBudgetUndoCount(budgetUndoStackRef.current.length);
+      pushBudgetUndo(prev, targetDate, 'Personalizar mes');
       return { ...prev, budgets: next };
+    }),
+
+    // Editar o borrar una tarjeta heredada ya no pide "Personalizar": el mes se
+    // materializa por debajo en la misma escritura, y la foto de deshacer se toma
+    // antes, de modo que un solo "Deshacer" lo revierte todo.
+    saveBudgetInPeriod: (period, original, changes) => {
+      if (!isMonthKey(period)) return false;
+      const book = { budgets: state.budgets, exclusions: state.budgetExclusions || {} };
+      const probe = saveBudgetInMonth(book, period, original, changes, newBudgetId, periodIndex);
+      if (probe === book) return false;
+      setState(prev => {
+        const current = { budgets: prev.budgets, exclusions: prev.budgetExclusions || {} };
+        const next = saveBudgetInMonth(current, period, original, changes, newBudgetId, periodIndex);
+        if (next === current) return prev;
+        pushBudgetUndo(prev, period, original ? `Editar ${changes.category}` : `Añadir ${changes.category}`);
+        return { ...prev, budgets: next.budgets, budgetExclusions: next.exclusions };
+      });
+      return true;
+    },
+    removeBudgetFromPeriod: (period, original) => setState(prev => {
+      if (!isMonthKey(period)) return prev;
+      const current = { budgets: prev.budgets, exclusions: prev.budgetExclusions || {} };
+      const next = removeBudgetFromMonth(current, period, original, newBudgetId, periodIndex);
+      if (next === current) return prev;
+      pushBudgetUndo(prev, period, `Eliminar ${original.category}`);
+      return { ...prev, budgets: next.budgets, budgetExclusions: next.exclusions };
     }),
 
     addTransaction: (t, myPart) => {
@@ -839,7 +880,11 @@ const App: React.FC = () => {
     addAccount: (a) => setState(prev => ({ ...prev, accounts: [...prev.accounts, { ...a, id: 'acc_' + Date.now(), currentBalance: a.initialBalance } as Account] })),
     updateAccount: (a) => setState(prev => ({ ...prev, accounts: prev.accounts.map(acc => acc.id === a.id ? a : acc) })),
     deleteAccount: (id) => setState(prev => ({ ...prev, accounts: prev.accounts.filter(a => a.id !== id) })),
-    addSaving: (s) => setState(prev => ({ ...prev, savings: [...prev.savings, { ...s, id: 'sav_' + Date.now() } as Saving] })),
+    addSaving: (s) => {
+      const id = 'sav_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6);
+      setState(prev => ({ ...prev, savings: [...prev.savings, { ...s, id } as Saving] }));
+      return id;
+    },
     updateSaving: (s) => setState(prev => ({ ...prev, savings: prev.savings.map(sv => sv.id === s.id ? s : sv) })),
     deleteSaving: (id) => setState(prev => ({ ...prev, savings: prev.savings.filter(s => s.id !== id) })),
     addRefund: (r) => setState(prev => ({ ...prev, refunds: [...prev.refunds, { ...r, id: 'ref_' + Date.now() } as Refund] })),
@@ -864,13 +909,11 @@ const App: React.FC = () => {
         console.warn('[Presupuestos] Selecciona un mes concreto para crear un presupuesto.');
         return prev;
       }
-      // Guardar snapshot para undo
-      const currentPeriodBudgets = prev.budgets.filter(bg => bg.period === period);
-      budgetUndoStackRef.current.push({ budgets: currentPeriodBudgets, label: `Añadir ${b.category}`, period });
-      if (budgetUndoStackRef.current.length > 20) budgetUndoStackRef.current.shift();
-      setBudgetUndoCount(budgetUndoStackRef.current.length);
+      pushBudgetUndo(prev, period, `Añadir ${b.category}`);
 
-      const existingIndex = prev.budgets.findIndex(bg => bg.category === b.category && bg.period === period);
+      // Por clave con tipo: antes un ingreso "Ventas" sobrescribia al gasto "Ventas".
+      const key = budgetKey({ category: b.category, type: b.type || 'expense', savingId: b.savingId });
+      const existingIndex = prev.budgets.findIndex(bg => bg.period === period && budgetKey(bg) === key);
       if (existingIndex >= 0) {
         const newBudgets = [...prev.budgets];
         newBudgets[existingIndex] = { ...newBudgets[existingIndex], ...b, period };
@@ -883,22 +926,13 @@ const App: React.FC = () => {
       // asi que editar un presupuesto sin periodo lo secuestraba para ese mes y
       // desaparecia de todos los demas.
       const period = b.period;
-      const currentPeriodBudgets = prev.budgets.filter(bg => bg.period === period);
-      budgetUndoStackRef.current.push({ budgets: currentPeriodBudgets, label: `Editar ${b.category}`, period });
-      if (budgetUndoStackRef.current.length > 20) budgetUndoStackRef.current.shift();
-      setBudgetUndoCount(budgetUndoStackRef.current.length);
+      pushBudgetUndo(prev, period, `Editar ${b.category}`);
 
       return { ...prev, budgets: prev.budgets.map(bg => bg.id === b.id ? { ...b, period } : bg) };
     }),
     deleteBudget: (id) => setState(prev => {
       const target = prev.budgets.find(b => b.id === id);
-      if (target) {
-        const period = target.period;
-        const currentPeriodBudgets = prev.budgets.filter(bg => bg.period === period);
-        budgetUndoStackRef.current.push({ budgets: currentPeriodBudgets, label: `Eliminar ${target.category}`, period });
-        if (budgetUndoStackRef.current.length > 20) budgetUndoStackRef.current.shift();
-        setBudgetUndoCount(budgetUndoStackRef.current.length);
-      }
+      if (target) pushBudgetUndo(prev, target.period, `Eliminar ${target.category}`);
       return { ...prev, budgets: prev.budgets.filter(b => b.id !== id) };
     }),
     addExtraSaving: (e) => setState(prev => ({ ...prev, extraSavings: [...(prev.extraSavings || []), { ...e, id: 'extra_' + Date.now() } as ExtraSaving] })),
@@ -921,6 +955,10 @@ const App: React.FC = () => {
     }),
     updateLayout: (newLayout) => setState(prev => ({ ...prev, dashboardLayout: newLayout })),
     setChallenges: (challenges) => setState(prev => ({ ...prev, challenges })),
+    saveAuraReport: (period, report) => setState(prev => ({
+      ...prev,
+      auraReports: { ...(prev.auraReports || {}), [period]: report },
+    })),
     toggleTheme: () => setState(prev => ({ ...prev, theme: prev.theme === 'light' ? 'dark' : 'light' })),
     updateChatHistory: (history) => setState(prev => ({ ...prev, chatHistory: history, chatLastDate: new Date().toISOString().split('T')[0] })),
 
@@ -978,7 +1016,14 @@ const App: React.FC = () => {
         const period = lastSnapshot.period !== undefined ? lastSnapshot.period : prev.currentDate;
         // Eliminar TODOS los presupuestos del periodo actual y reemplazar con el snapshot
         const otherBudgets = prev.budgets.filter(b => b.period !== period);
-        return { ...prev, budgets: [...otherBudgets, ...lastSnapshot.budgets] };
+        const restored = { ...prev, budgets: [...otherBudgets, ...lastSnapshot.budgets] };
+        if (period && lastSnapshot.exclusions) {
+          const exclusions = { ...(prev.budgetExclusions || {}) };
+          if (lastSnapshot.exclusions.length) exclusions[period] = lastSnapshot.exclusions;
+          else delete exclusions[period];
+          restored.budgetExclusions = exclusions;
+        }
+        return restored;
       });
       return { label: lastSnapshot.label };
     },
@@ -1006,6 +1051,7 @@ const App: React.FC = () => {
   return (
     <FinanceContext.Provider value={contextValue}>
       <HashRouter>
+        <AuraVisionProvider>
         <div className="flex h-screen bg-slate-50 dark:bg-slate-950 transition-colors duration-300 overflow-hidden text-slate-900 dark:text-slate-100 font-sans">
           <Sidebar isOpen={isMenuOpen} onClose={() => setIsMenuOpen(false)} onLogout={logout} isGuest={isGuest} session={session} />
           <main className="flex-1 flex flex-col overflow-hidden relative">
@@ -1026,6 +1072,7 @@ const App: React.FC = () => {
             <QuickAddButton />
           </main>
         </div>
+        </AuraVisionProvider>
       </HashRouter>
     </FinanceContext.Provider>
   );
@@ -1069,6 +1116,7 @@ const BackupBox = () => {
       currentDate: state.currentDate, viewMode: state.viewMode,
       dashboardLayout: state.dashboardLayout, theme: state.theme,
       chatHistory: state.chatHistory, chatLastDate: state.chatLastDate,
+      budgetExclusions: state.budgetExclusions, auraReports: state.auraReports,
     };
     descargarTexto(fullBackup(plano, ahora), backupFilename('finanzas-copia', 'json', ahora), 'application/json');
     marcar('Copia descargada');
@@ -1223,6 +1271,7 @@ const GuardBanner = () => {
       currentDate: finance.currentDate, viewMode: finance.viewMode,
       dashboardLayout: finance.dashboardLayout, theme: finance.theme,
       chatHistory: finance.chatHistory, chatLastDate: finance.chatLastDate,
+      budgetExclusions: finance.budgetExclusions, auraReports: finance.auraReports,
     };
     descargarTexto(fullBackup(plano, ahora), backupFilename('finanzas-copia', 'json', ahora), 'application/json');
   };
@@ -1536,11 +1585,13 @@ const PeriodDropdown: React.FC<{ currentDate: string; viewMode: 'month' | 'year'
 const QuickAddButton = () => {
   const [open, setOpen] = useState(false);
   const navigate = useNavigate();
+  const { openPicker } = useAuraVision();
   return (
     <div className="fixed bottom-6 right-6 md:bottom-8 md:right-8 z-40">
       {open && (
         <div className="absolute bottom-16 right-0 mb-2 flex flex-col gap-2 animate-in slide-in-from-bottom-4 duration-300">
-          <button onClick={() => { setOpen(false); navigate('/transactions', { state: { triggerScan: true } }); }} className="flex items-center gap-3 bg-blue-50 dark:bg-blue-900 text-blue-700 dark:text-blue-300 px-5 py-4 rounded-2xl shadow-xl border border-blue-100 dark:border-blue-800 whitespace-nowrap group"><Camera size={20} /> <span className="text-sm font-black uppercase tracking-widest">Aura Vision</span></button>
+          {/* Abre la camara o la galeria aqui mismo, sin cambiar de pantalla. */}
+          <button onClick={() => { setOpen(false); openPicker(); }} className="flex items-center gap-3 bg-blue-50 dark:bg-blue-900 text-blue-700 dark:text-blue-300 px-5 py-4 rounded-2xl shadow-xl border border-blue-100 dark:border-blue-800 whitespace-nowrap group"><Camera size={20} /> <span className="text-sm font-black uppercase tracking-widest">Aura Vision</span></button>
           <button onClick={() => { setOpen(false); navigate('/transactions', { state: { openModal: true } }); }} className="flex items-center gap-3 bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-200 px-5 py-4 rounded-2xl shadow-xl border border-slate-100 dark:border-slate-700 whitespace-nowrap"><Receipt size={20} /> <span className="text-sm font-black uppercase tracking-widest">Nuevo Movimiento</span></button>
           <button onClick={() => { setOpen(false); navigate('/advisor'); }} className="flex items-center gap-3 bg-blue-600 text-white px-5 py-4 rounded-2xl shadow-xl hover:bg-blue-700 transition-all"><MessageSquare size={20} /> <span className="text-sm font-black uppercase tracking-widest">Hablar con Aura</span></button>
         </div>

@@ -21,7 +21,27 @@ vm.runInNewContext(outputText, {
   console, process, fetch, Response, Request, JSON, Math, Number, Date, Object, Array, String, RegExp, Error, Promise,
 }, { filename: 'gemini-core.mts' });
 
-const { functionDeclarations, ADVISOR_SYSTEM_INSTRUCTION, MODEL_CHAT, MODEL_CHALLENGES, MODEL_RECEIPTS } = mod.exports;
+const {
+  functionDeclarations, ADVISOR_SYSTEM_INSTRUCTION, MODEL_CHAT, MODEL_CHALLENGES, MODEL_RECEIPTS,
+  ACTION_NAMES, monthReportSchema, MONTH_REPORT_PROMPT, RECEIPT_MIME_TYPES,
+} = mod.exports;
+
+test('el proxy admite el informe de Aura y conserva las acciones anteriores', () => {
+  for (const name of ['analyzeReceipt', 'generateChallenges', 'financialAdvice', 'monthReport']) {
+    assert.ok(ACTION_NAMES.indexOf(name) !== -1, `falta la accion ${name}`);
+  }
+});
+
+test('el informe de Aura tiene un esquema cerrado y no pide recalcular', () => {
+  assert.equal([...monthReportSchema.required].sort().join(','), 'consejo,puntos,titular');
+  assert.match(MONTH_REPORT_PROMPT, /No recalcules/);
+  assert.match(MONTH_REPORT_PROMPT, /inventes cifras/);
+});
+
+test('el escaner acepta capturas PNG ademas de fotos JPEG', () => {
+  assert.ok(RECEIPT_MIME_TYPES.indexOf('image/png') !== -1);
+  assert.ok(RECEIPT_MIME_TYPES.indexOf('image/jpeg') !== -1);
+});
 
 // Los nombres que el cliente sabe convertir en propuestas. Si aqui se declara una
 // accion que advisorActions no conoce, Aura la propondra y fallara al prepararla.

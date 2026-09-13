@@ -42,5 +42,10 @@ export function loadServices() {
   const realisticProjection = loadModule('../services/realisticProjection.ts', {
     './periodIndex': periodIndex,
   });
-  return { txClassify, periods, periodIndex, ownership, dashboardBlocks, budgetPlan, realisticProjection };
+  const monthReport = loadModule('../services/monthReport.ts', {
+    './periodIndex': periodIndex,
+    './budgetPlan': budgetPlan,
+    './periods': periods,
+  });
+  return { txClassify, periods, periodIndex, ownership, dashboardBlocks, budgetPlan, realisticProjection, monthReport };
 }

@@ -105,7 +105,9 @@ function assertRefundsUnchanged(context: Context, nextTransactions: Transaction[
 type Values = Record<string, unknown>;
 type Builder = (v: Values, c: Context, today: string) => ProposalValue & { summary: string; tier: ProposalTier };
 
-const periodBudgets = (c: Context) => c.budgets.filter(b => !b.period || b.period === c.currentDate);
+// Los objetivos de ahorro llevan el nombre de la hucha: fuera, para que Aura no los
+// confunda con una categoria de gasto o ingreso del mismo nombre.
+const periodBudgets = (c: Context) => c.budgets.filter(b => b.type !== 'saving' && (!b.period || b.period === c.currentDate));
 const requireMonth = (c: Context) => {
   if (!MONTH.test(c.currentDate)) throw new Error('Selecciona un mes concreto antes de cambiar presupuestos.');
   return c.currentDate;

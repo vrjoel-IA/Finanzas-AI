@@ -1,11 +1,29 @@
 
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import { useFinance } from '../App';
 import { Plus, PiggyBank, TrendingUp, ArrowRightLeft, Percent, X, Edit2, Trash2, Check } from 'lucide-react';
 import { Saving } from '../types';
+import { savingFlow } from '../services/periodIndex';
+import { isMonthKey } from '../services/periods';
+import { budgetStatus } from '../services/budgetPlan';
+import { budgetCardTone } from './budgetTone';
+
+const SAVING_COLOR = '#f59e0b';
 
 const Savings: React.FC = () => {
-  const { savings, currentDate, getSavingHistoricalBalance, addSaving, updateSaving, deleteSaving } = useFinance();
+  const {
+    savings, currentDate, getSavingHistoricalBalance, addSaving, updateSaving, deleteSaving,
+    getEffectiveBudgets, viewIndex, saveBudgetInPeriod, removeBudgetFromPeriod,
+  } = useFinance();
+  const isMonthView = isMonthKey(currentDate);
+
+  // Objetivos de aportacion mensual: los mismos que la pestaña Ahorros de Presupuestos.
+  const goals = useMemo(
+    () => getEffectiveBudgets(currentDate).filter(b => b.type === 'saving'),
+    [getEffectiveBudgets, currentDate],
+  );
+  const goalOf = (savingId: string) => goals.filter(b => b.savingId === savingId)[0] || null;
+  const [monthlyGoalInput, setMonthlyGoalInput] = useState<number | ''>('');
   const [isAdding, setIsAdding] = useState(false);
   const [editingSaving, setEditingSaving] = useState<Saving | null>(null);
   const [adjustingSaving, setAdjustingSaving] = useState<Saving | null>(null);
@@ -30,6 +48,7 @@ const Savings: React.FC = () => {
     setIsInvestment(false);
     setGrowthRateInput('');
     setEmoji('💰');
+    setMonthlyGoalInput('');
     setIsAdding(false);
     setEditingSaving(null);
   };
@@ -41,6 +60,8 @@ const Savings: React.FC = () => {
     setIsInvestment(s.isInvestment);
     setGrowthRateInput(s.growthRate || '');
     setEmoji(s.emoji || (s.isInvestment ? '📈' : '💰'));
+    const goal = goalOf(s.id);
+    setMonthlyGoalInput(goal ? goal.limit : '');
     setEditingSaving(s);
   };
 
@@ -50,7 +71,11 @@ const Savings: React.FC = () => {
     const finalTarget = targetInput === '' ? undefined : targetInput;
     const finalGrowth = isInvestment && growthRateInput !== '' ? growthRateInput : undefined;
 
+    let savingId: string;
+    let color = SAVING_COLOR;
     if (editingSaving) {
+      savingId = editingSaving.id;
+      color = editingSaving.color || SAVING_COLOR;
       updateSaving({
         ...editingSaving,
         name,
@@ -61,15 +86,32 @@ const Savings: React.FC = () => {
         emoji,
       });
     } else {
-      addSaving({
+      savingId = addSaving({
         name,
         currentAmount: finalAmount,
         targetAmount: finalTarget,
         isInvestment,
         growthRate: finalGrowth,
-        color: '#f59e0b',
+        color: SAVING_COLOR,
         emoji,
       });
+    }
+
+    // El objetivo mensual solo se escribe si cambia: guardar la hucha sin tocarlo
+    // no debe crear presupuestos ni entradas de deshacer.
+    if (isMonthView) {
+      const existing = editingSaving ? goalOf(savingId) : null;
+      const goal = monthlyGoalInput === '' ? null : Number(monthlyGoalInput);
+      if (goal !== null && goal > 0) {
+        const unchanged = existing && existing.limit === goal && existing.category === name && existing.icon === emoji;
+        if (!unchanged) {
+          saveBudgetInPeriod(currentDate, existing, {
+            category: name, limit: goal, icon: emoji || '💰', color, type: 'saving', savingId,
+          });
+        }
+      } else if (existing) {
+        removeBudgetFromPeriod(currentDate, existing);
+      }
     }
     resetForm();
   };
@@ -110,9 +152,14 @@ const Savings: React.FC = () => {
           const displayAmount = getSavingHistoricalBalance(s.id, currentDate);
           const progress = s.targetAmount ? Math.min((displayAmount / s.targetAmount) * 100, 100) : null;
           const isConfirming = confirmDeleteId === s.id;
+          const goal = goalOf(s.id);
+          const savedThisMonth = savingFlow(viewIndex, s.id, currentDate).deposits;
+          const goalStatus = goal ? budgetStatus({ type: 'saving', spent: savedThisMonth, limit: goal.limit }) : 'normal';
+          const goalProgress = goal && goal.limit > 0 ? Math.min((savedThisMonth / goal.limit) * 100, 100) : 0;
+          const savingColor = s.color || SAVING_COLOR;
 
           return (
-            <div key={s.id} className="bg-white dark:bg-slate-900 rounded-[2.5rem] p-8 border border-slate-100 dark:border-slate-800 shadow-sm relative group hover:shadow-md transition-all duration-300">
+            <div key={s.id} className={`rounded-[2.5rem] p-8 border shadow-sm relative group hover:shadow-md transition-all duration-300 ${budgetCardTone('saving', goalStatus)}`}>
               <div className="flex items-center justify-between mb-6">
                 <div className="flex items-center gap-4">
                   <div className={`w-14 h-14 rounded-2xl flex items-center justify-center text-2xl shadow-inner dark:shadow-none ${s.isInvestment ? 'bg-indigo-50 dark:bg-indigo-900/40 text-indigo-600 dark:text-indigo-400' : 'bg-amber-50 dark:bg-amber-900/40 text-amber-600 dark:text-amber-400'} transition-colors`}>
@@ -181,6 +228,18 @@ const Savings: React.FC = () => {
                         className="h-full bg-blue-600 dark:bg-blue-50 rounded-full transition-all duration-1000 ease-out" 
                         style={{ width: `${progress}%` }}
                       ></div>
+                    </div>
+                  </div>
+                )}
+
+                {goal && (
+                  <div className="mt-5">
+                    <div className="flex justify-between text-[10px] font-black uppercase tracking-wider mb-2">
+                      <span style={{ color: savingColor }}>Este mes: {savedThisMonth.toLocaleString('es-ES')}€ de {goal.limit.toLocaleString('es-ES')}€</span>
+                      {goalStatus === 'achieved' && <span className="text-amber-600 dark:text-amber-400">Logrado</span>}
+                    </div>
+                    <div className="w-full bg-slate-100 dark:bg-slate-800 h-2 rounded-full overflow-hidden">
+                      <div className="h-full rounded-full transition-all duration-1000 ease-out" style={{ width: `${goalProgress}%`, backgroundColor: savingColor }}></div>
                     </div>
                   </div>
                 )}
@@ -303,6 +362,20 @@ const Savings: React.FC = () => {
                   />
                 </div>
               </div>
+
+              {isMonthView && (
+                <div>
+                  <label className="block text-[10px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-widest mb-2">Objetivo mensual de aportación</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    value={monthlyGoalInput}
+                    onChange={e => setMonthlyGoalInput(e.target.value === '' ? '' : Number(e.target.value))}
+                    className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-100 dark:border-slate-700 rounded-2xl p-4 font-bold outline-none text-slate-900 dark:text-white"
+                    placeholder="Opcional · aparece en Presupuestos › Ahorros"
+                  />
+                </div>
+              )}
 
               <div>
                 <label className="block text-[10px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-widest mb-2">Emoticono</label>

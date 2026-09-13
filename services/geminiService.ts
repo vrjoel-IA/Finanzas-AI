@@ -39,8 +39,18 @@ async function callGemini<T>(action: string, payload: Record<string, unknown>): 
 }
 
 // Analiza una captura de pantalla o ticket extrayendo múltiples líneas y categorizando inteligentemente.
-export const analyzeReceipt = (base64Image: string): Promise<ScannedTransaction[]> =>
-  callGemini<ScannedTransaction[]>('analyzeReceipt', { image: base64Image });
+export const analyzeReceipt = (base64Image: string, mimeType?: string): Promise<ScannedTransaction[]> =>
+  callGemini<ScannedTransaction[]>('analyzeReceipt', { image: base64Image, mimeType });
+
+export interface AuraComment {
+  titular: string;
+  puntos: string[];
+  consejo: string;
+}
+
+/** Comentario de Aura sobre el informe local del periodo. Solo viaja el informe, nunca transacciones. */
+export const generateMonthReport = (report: unknown): Promise<AuraComment> =>
+  callGemini<AuraComment>('monthReport', { report: JSON.stringify(report) });
 
 /**
  * Genera retos financieros personalizados basados en el contexto presupuestario y patrimonial del usuario.

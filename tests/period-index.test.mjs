@@ -6,6 +6,7 @@ const { periodIndex } = loadServices();
 const {
   buildPeriodIndex, aggregatePeriod, monthSeries,
   accountDeltaAt, savingDeltaAt, categorySpent, topExpenseCategories,
+  topCategories, periodHeadline, savingFlow,
 } = periodIndex;
 
 const tx = (over = {}) => ({
@@ -273,4 +274,64 @@ test('el saldo de hucha del indice coincide con el bucle original', () => {
       period,
     );
   }
+});
+
+// ---------------------------------------------------------------------------
+// Cifras del widget principal y objetivos de ahorro
+// ---------------------------------------------------------------------------
+
+test('las cifras de cabecera usan las definiciones del widget principal', () => {
+  // Replica literal del calculo de Dashboard.tsx (metrics) sobre las mismas transacciones.
+  const transactions = [
+    tx({ date: '2026-09-01', amount: 2000, type: 'income', category: 'Nomina' }),
+    tx({ date: '2026-09-02', amount: 600, type: 'expense', category: 'Vivienda' }),
+    tx({ date: '2026-09-03', amount: 50, type: 'income', category: 'Ocio', refundId: 'r1' }),
+    tx({ date: '2026-09-04', amount: 300, type: 'expense', category: 'Ahorro', savingId: 's1' }),
+    tx({ date: '2026-09-05', amount: 120, type: 'income', category: 'Ahorro', savingId: 's1' }),
+    tx({ date: '2026-09-06', amount: 500, type: 'expense', category: 'Traspaso' }),
+  ];
+  const isSaving = t => t.category === 'Ahorro' || t.category === 'Ahorros' || !!t.savingId;
+  const isTransfer = t => t.category === 'Traspaso' || t.category === 'Transferencia';
+  const baseIncome = transactions.filter(t => t.type === 'income' && !t.refundId && !isSaving(t) && !isTransfer(t)).reduce((s, t) => s + t.amount, 0);
+  const refunds = transactions.filter(t => t.type === 'income' && t.refundId).reduce((s, t) => s + t.amount, 0);
+  const baseSpending = transactions.filter(t => t.type === 'expense' && !isSaving(t) && !isTransfer(t)).reduce((s, t) => s + t.amount, 0);
+  const withdrawals = transactions.filter(t => t.type === 'income' && isSaving(t)).reduce((s, t) => s + t.amount, 0);
+  const deposits = transactions.filter(t => t.type === 'expense' && isSaving(t)).reduce((s, t) => s + t.amount, 0);
+  const expense = Math.max(0, baseSpending - refunds);
+
+  const headline = periodHeadline(aggregatePeriod(buildPeriodIndex(transactions), '2026-09'));
+  assert.equal(headline.income, baseIncome + withdrawals);
+  assert.equal(headline.expense, expense);
+  assert.equal(headline.saving, deposits, 'ahorro = dinero movido a huchas, no el resultado del mes');
+  assert.equal(headline.result, baseIncome + withdrawals - expense - deposits);
+});
+
+test('aportado y retirado por hucha, en mes y en anio', () => {
+  const transactions = [
+    tx({ date: '2026-08-10', amount: 100, type: 'expense', category: 'Ahorro', savingId: 's1' }),
+    tx({ date: '2026-09-10', amount: 250, type: 'expense', category: 'Ahorro', savingId: 's1' }),
+    tx({ date: '2026-09-12', amount: 40, type: 'income', category: 'Ahorro', savingId: 's1' }),
+    tx({ date: '2026-09-15', amount: 70, type: 'expense', category: 'Ahorro', savingId: 's2' }),
+  ];
+  const index = buildPeriodIndex(transactions);
+  assert.equal(JSON.stringify(savingFlow(index, 's1', '2026-09')), JSON.stringify({ deposits: 250, withdrawals: 40 }));
+  assert.equal(JSON.stringify(savingFlow(index, 's1', '2026')), JSON.stringify({ deposits: 350, withdrawals: 40 }));
+  assert.equal(savingFlow(index, 's2', '2026-08').deposits, 0);
+  assert.equal(savingFlow(index, 'no-existe', '2026-09').deposits, 0);
+});
+
+test('las aportaciones por hucha respetan el porcentaje de la hucha', () => {
+  const transactions = [tx({ date: '2026-09-10', amount: 200, type: 'expense', category: 'Ahorro', savingId: 's1' })];
+  const index = buildPeriodIndex(transactions, { savings: { s1: 0.5 } });
+  assert.equal(savingFlow(index, 's1', '2026-09').deposits, 100);
+});
+
+test('categorias de ingreso ordenadas, sin reembolsos', () => {
+  const transactions = [
+    tx({ date: '2026-09-01', amount: 2000, type: 'income', category: 'Nomina' }),
+    tx({ date: '2026-09-02', amount: 300, type: 'income', category: 'Ventas' }),
+    tx({ date: '2026-09-03', amount: 900, type: 'income', category: 'Ocio', refundId: 'r1' }),
+  ];
+  const rows = topCategories(aggregatePeriod(buildPeriodIndex(transactions), '2026-09'), 'income', 0);
+  assert.equal(rows.map(r => r.category).join(','), 'Nomina,Ventas');
 });

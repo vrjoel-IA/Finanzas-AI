@@ -76,6 +76,30 @@ const receiptSchema = {
   },
 };
 
+// Formatos que admite el escaner. Las capturas de pantalla llegan en PNG y antes
+// se enviaban siempre como JPEG.
+export const RECEIPT_MIME_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/heic', 'image/heif'];
+
+const MAX_REPORT_CHARS = 20_000;
+
+export const monthReportSchema = {
+  type: Type.OBJECT,
+  properties: {
+    titular: { type: Type.STRING, description: 'Una frase que resume el periodo' },
+    puntos: { type: Type.ARRAY, items: { type: Type.STRING }, description: 'Entre dos y cuatro observaciones concretas' },
+    consejo: { type: Type.STRING, description: 'Una recomendación accionable' },
+  },
+  required: ['titular', 'puntos', 'consejo'],
+};
+
+export const MONTH_REPORT_PROMPT = `Eres "Aura", la asistente financiera del usuario. Recibes un informe ya calculado
+de su periodo (JSON). No recalcules nada ni inventes cifras: usa solo las del informe.
+- Si "kind" es "progress", el periodo está en curso: di cómo va y qué vigilar hasta final de mes.
+- Si "kind" es "summary", el periodo ha terminado: resúmelo y extrae una lección.
+- Si "kind" es "future", el periodo no ha empezado: comenta lo previsto.
+Escribe en español, de tú, directo y breve. "puntos" tiene entre dos y cuatro frases cortas
+con cifras concretas; "consejo" es una sola acción que el usuario pueda hacer.`;
+
 const challengeSchema = {
   type: Type.ARRAY,
   items: {
@@ -346,9 +370,12 @@ type Payload = Record<string, unknown>;
 const actions: Record<string, (ai: GoogleGenAI, payload: Payload) => Promise<unknown>> = {
   async analyzeReceipt(ai, payload) {
     const image = readString(payload.image, MAX_IMAGE_CHARS, 'image');
+    const mimeType = typeof payload.mimeType === 'string' && RECEIPT_MIME_TYPES.indexOf(payload.mimeType) !== -1
+      ? payload.mimeType
+      : 'image/jpeg';
     const response = await ai.models.generateContent({
       model: MODEL_RECEIPTS,
-      contents: { parts: [{ inlineData: { mimeType: 'image/jpeg', data: image } }, { text: RECEIPT_PROMPT }] },
+      contents: { parts: [{ inlineData: { mimeType, data: image } }, { text: RECEIPT_PROMPT }] },
       config: { responseMimeType: 'application/json', responseSchema: receiptSchema },
     });
     return JSON.parse(response.text || '[]');
@@ -362,6 +389,23 @@ const actions: Record<string, (ai: GoogleGenAI, payload: Payload) => Promise<unk
       config: { responseMimeType: 'application/json', responseSchema: challengeSchema },
     });
     return JSON.parse(response.text || '[]');
+  },
+
+  // Comentario sobre el informe local del periodo. El cliente manda el informe ya
+  // calculado, nunca transacciones: la IA redacta, no calcula.
+  async monthReport(ai, payload) {
+    const report = readString(payload.report, MAX_REPORT_CHARS, 'report');
+    const response = await ai.models.generateContent({
+      model: MODEL_CHALLENGES,
+      contents: `${MONTH_REPORT_PROMPT}\n\nINFORME:\n${report}`,
+      config: { responseMimeType: 'application/json', responseSchema: monthReportSchema },
+    });
+    const parsed = JSON.parse(response.text || '{}') as { titular?: unknown; puntos?: unknown; consejo?: unknown };
+    return {
+      titular: typeof parsed.titular === 'string' ? parsed.titular : '',
+      puntos: Array.isArray(parsed.puntos) ? parsed.puntos.filter(p => typeof p === 'string').slice(0, 4) : [],
+      consejo: typeof parsed.consejo === 'string' ? parsed.consejo : '',
+    };
   },
 
   async financialAdvice(ai, payload) {
@@ -388,6 +432,8 @@ const actions: Record<string, (ai: GoogleGenAI, payload: Payload) => Promise<unk
     };
   },
 };
+
+export const ACTION_NAMES = Object.keys(actions);
 
 export async function handleGeminiRequest(request: Request): Promise<Response> {
   if (request.method !== 'POST') return fail(405, 'Método no permitido.');
