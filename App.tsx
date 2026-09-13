@@ -330,10 +330,22 @@ const App: React.FC = () => {
           safeSetItem(getDirtyKey(userId), 'false');
       } else if (data && data.state && cloudTime > localTime) {
         console.log('[Sync] → Descargando datos de la nube (nube más reciente)');
-        const mergedState = { ...INITIAL_DATA, ...data.state };
+        const mergedState = { ...INITIAL_DATA, ...data.state } as FinanceState;
+          // Descargar tambien puede destruir: si la nube trae menos datos de los
+          // que hay aqui, se para y decide el usuario. La guardia cubria lo que se
+          // escribe, no lo que se recibe, y era el mismo agujero en espejo.
+          const veredictoBajada = checkDestructiveWrite(lastSafeStateRef.current, mergedState);
+          if (veredictoBajada.destructive && !overrideGuardRef.current) {
+            console.warn('[Sync] Descarga bloqueada:', veredictoBajada.reason);
+            setBlockedWrite(veredictoBajada);
+            setDataLoadedFromCloud(true);
+            setIsSyncing(false);
+            syncInProgressRef.current = false;
+            return;
+          }
           ignoreNextUpdate.current = true;
-          setState(mergedState as FinanceState);
-          lastSafeStateRef.current = mergedState as FinanceState;
+          setState(mergedState);
+          lastSafeStateRef.current = mergedState;
           safeSetItem(getBackupKey(userId), JSON.stringify(mergedState));
           safeSetItem(getTimestampKey(userId), cloudTime.toString());
           safeSetItem(getDirtyKey(userId), 'false');
@@ -1324,8 +1336,16 @@ const AccountPanel = ({ onClose, onLogout, session }: { onClose: () => void; onL
 const Sidebar = ({ isOpen, onClose, onLogout, isGuest, session }: { isOpen: boolean, onClose: () => void, onLogout: () => void, isGuest: boolean, session: any }) => {
   const location = useLocation();
   const [panelAbierto, setPanelAbierto] = useState(false);
+  const { isSyncing, syncError, retrySync, manualRefresh } = useFinance();
   const sync = useSyncState();
   const email = session?.user?.email || '';
+  // Sincronizar a mano sin abrir el panel: si hay error reintenta la subida, y
+  // si no, comprueba si hay algo nuevo. Nunca descarta nada.
+  const sincronizarAhora = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (isGuest || isSyncing) return;
+    syncError ? retrySync() : manualRefresh();
+  };
   const menuItems = [{ path: '/', icon: <LayoutDashboard size={20} />, label: 'Dashboard' }, { path: '/accounts', icon: <Wallet size={20} />, label: 'Cuentas' }, { path: '/savings', icon: <PiggyBank size={20} />, label: 'Ahorro' }, { path: '/wealth', icon: <LineChartIcon size={20} />, label: 'Proyecciones' }, { path: '/refunds', icon: <Receipt size={20} />, label: 'Reembolsos' }, { path: '/transactions', icon: <BarChart3 size={20} />, label: 'Transacciones' }, { path: '/budget', icon: <Receipt size={20} />, label: 'Presupuesto' }, { path: '/advisor', icon: <MessageSquare size={20} />, label: 'Asesor IA' }];
   return (
     <>
@@ -1335,11 +1355,12 @@ const Sidebar = ({ isOpen, onClose, onLogout, isGuest, session }: { isOpen: bool
 
         <nav className="flex-1 px-4 space-y-1 overflow-y-auto custom-scrollbar">{menuItems.map((item) => (<Link key={item.path} to={item.path} onClick={onClose} className={`flex items-center gap-3 px-4 py-3 rounded-xl transition-all duration-200 ${location.pathname === item.path ? 'bg-blue-600 text-white font-semibold shadow-lg shadow-blue-100 dark:shadow-none' : 'text-slate-500 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800 hover:text-slate-800 dark:hover:text-slate-200'}`}><span className="shrink-0">{item.icon}</span><span className="text-sm">{item.label}</span></Link>))}</nav>
 
-        {/* Cuenta, sincronizacion y copias: una sola fila que abre el panel. */}
-        <div className="p-3 border-t border-slate-100 dark:border-slate-800">
+        {/* Cuenta, sincronizacion y copias: una fila que abre el panel, con
+            sincronizacion rapida a la derecha para no tener que entrar. */}
+        <div className="p-3 border-t border-slate-100 dark:border-slate-800 flex items-center gap-1">
           <button
             onClick={() => setPanelAbierto(true)}
-            className="w-full flex items-center gap-3 p-2.5 rounded-2xl hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors text-left group"
+            className="flex-1 min-w-0 flex items-center gap-3 p-2.5 rounded-2xl hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors text-left group"
           >
             <div className={`relative w-9 h-9 rounded-xl flex items-center justify-center shrink-0 font-black text-[10px] ${isGuest ? 'bg-amber-100 dark:bg-amber-900/40 text-amber-600' : 'bg-blue-600 text-white'}`}>
               {isGuest ? <Sparkles size={16} /> : email.substring(0, 2).toUpperCase()}
@@ -1349,8 +1370,22 @@ const Sidebar = ({ isOpen, onClose, onLogout, isGuest, session }: { isOpen: bool
               <p className="text-[11px] font-bold text-slate-700 dark:text-slate-200 truncate">{isGuest ? 'Modo Local' : email}</p>
               <p className={`text-[10px] font-medium ${sync.tono}`}>{sync.texto}</p>
             </div>
-            <ChevronRight size={16} className="text-slate-300 dark:text-slate-600 group-hover:text-slate-500 shrink-0" />
           </button>
+          {!isGuest && (
+            <button
+              onClick={sincronizarAhora}
+              disabled={isSyncing}
+              title={syncError ? 'Reintentar la subida' : 'Comprobar si hay cambios'}
+              aria-label={syncError ? 'Reintentar sincronización' : 'Sincronizar ahora'}
+              className={`p-2.5 rounded-xl shrink-0 transition-colors ${
+                syncError
+                  ? 'text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-900/20'
+                  : 'text-slate-400 hover:text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-900/20'
+              } disabled:opacity-50`}
+            >
+              <RefreshCw size={16} className={isSyncing ? 'animate-spin text-blue-500' : ''} />
+            </button>
+          )}
         </div>
       </aside>
 
