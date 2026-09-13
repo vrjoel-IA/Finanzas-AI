@@ -89,7 +89,7 @@ const AIAdvisor: React.FC = () => {
   const advisorContext = useMemo(() => buildAdvisorContext({
     accounts: financeState.accounts,
     savings: financeState.savings,
-    budgets: financeState.budgets,
+    budgets: financeState.getEffectiveBudgets(financeState.currentDate),
     transactions: financeState.transactions,
     refunds: financeState.refunds,
     challenges: financeState.challenges,
