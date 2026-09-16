@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { loadModule } from './_load.mjs';
 
 const E = loadModule('../services/exportData.ts');
+const { pickState, STATE_KEYS, fullBackup } = E;
 
 const estado = {
   accounts: [{ id: 'a1', name: 'Banco Principal' }, { id: 'a2', name: 'Efectivo' }],
@@ -112,4 +113,38 @@ test('aguanta un estado vacio o incompleto', () => {
   assert.match(E.transactionsToCsv({}), /^Fecha;/);
   assert.match(E.accountsToCsv({ accounts: null }), /^Nombre;/);
   assert.equal(JSON.parse(E.fullBackup({}, new Date())).resumen.transacciones, 0);
+});
+
+// ---------------------------------------------------------------------------
+// Las claves del estado estaban enumeradas a mano en dos sitios de App.tsx. Una
+// coleccion nueva se olvidaba en uno de los dos y la copia salia incompleta.
+// ---------------------------------------------------------------------------
+
+test('la copia lleva todas las claves del estado y ninguna funcion', () => {
+  const contexto = {
+    accounts: [{ id: 'a1' }], savings: [], refunds: [], transactions: [{ id: 't1' }],
+    budgets: [], challenges: [], extraSavings: [], manualContributions: {},
+    currentDate: '2026-09', viewMode: 'month', dashboardLayout: ['balance'], theme: 'dark',
+    chatHistory: [], chatLastDate: '', budgetExclusions: {}, auraReports: {},
+    expenseReminders: [{ id: 'r1' }],
+    // Lo que useFinance() mezcla con el estado y no debe viajar:
+    addTransaction: () => {}, deleteAccount: () => {}, isSyncing: false,
+  };
+
+  const plano = pickState(contexto);
+  for (const clave of STATE_KEYS) {
+    assert.ok(Object.hasOwn(plano, clave), 'falta la clave ' + clave);
+  }
+  assert.equal(Object.hasOwn(plano, 'addTransaction'), false, 'no viajan funciones');
+  assert.equal(Object.hasOwn(plano, 'isSyncing'), false, 'ni el estado de la UI');
+
+  const copia = JSON.parse(fullBackup(plano, new Date('2026-09-16T10:00:00Z')));
+  assert.equal(copia.estado.expenseReminders.length, 1, 'los recordatorios entran en la copia');
+  assert.equal(copia.resumen.transacciones, 1);
+});
+
+test('pickState aguanta un estado nulo o a medias', () => {
+  assert.equal(Object.keys(pickState(null)).length, 0);
+  assert.equal(Object.keys(pickState(undefined)).length, 0);
+  assert.equal(Object.keys(pickState({ transactions: [] })).length, 1);
 });

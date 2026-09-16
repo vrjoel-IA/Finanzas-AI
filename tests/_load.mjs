@@ -42,10 +42,17 @@ export function loadServices() {
   const realisticProjection = loadModule('../services/realisticProjection.ts', {
     './periodIndex': periodIndex,
   });
+  // scanQueue solo importa tipos (../types y ./geminiService), y los imports de
+  // tipo desaparecen al transpilar: no hay nada que inyectarle.
+  const scanQueue = loadModule('../services/scanQueue.ts');
+  const expenseReminders = loadModule('../services/expenseReminders.ts', {
+    './periods': periods,
+    './txClassify': txClassify,
+  });
   const monthReport = loadModule('../services/monthReport.ts', {
     './periodIndex': periodIndex,
     './budgetPlan': budgetPlan,
     './periods': periods,
   });
-  return { txClassify, periods, periodIndex, ownership, dashboardBlocks, budgetPlan, realisticProjection, monthReport };
+  return { txClassify, periods, periodIndex, ownership, dashboardBlocks, budgetPlan, realisticProjection, monthReport, scanQueue, expenseReminders };
 }

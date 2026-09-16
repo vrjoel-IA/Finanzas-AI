@@ -4,7 +4,7 @@ import { loadServices } from './_load.mjs';
 
 const { periodIndex, monthReport } = loadServices();
 const { buildPeriodIndex } = periodIndex;
-const { buildMonthReport, daysInMonth } = monthReport;
+const { buildMonthReport, compareLabel, daysInMonth } = monthReport;
 
 const tx = (over = {}) => ({
   id: 't' + Math.random(), date: '2026-09-10', amount: 100, description: 'x',
@@ -110,4 +110,65 @@ test('construir el informe no toca las entradas', () => {
   const before = JSON.stringify([transactions, budgets]);
   report(transactions, budgets, '2026-09', '2026-09-20');
   assert.equal(JSON.stringify([transactions, budgets]), before);
+});
+
+// ---------------------------------------------------------------------------
+// Etiqueta del periodo comparado. La comparativa decia "Entonces: 1.100 €", que
+// no nombra ningun periodo y obliga a subir la vista hasta la cabecera.
+// ---------------------------------------------------------------------------
+
+test('el periodo comparado se nombra sin repetir el anio cuando es el mismo', () => {
+  assert.equal(compareLabel('2026-08', '2026-09'), 'Agosto');
+});
+
+test('comparando con hace un anio, el anio si aparece', () => {
+  assert.equal(compareLabel('2025-09', '2026-09'), 'Septiembre 2025');
+});
+
+test('diciembre contra enero del anio siguiente lleva anio', () => {
+  assert.equal(compareLabel('2025-12', '2026-01'), 'Diciembre 2025');
+});
+
+test('en vista anual la etiqueta es el propio anio', () => {
+  assert.equal(compareLabel('2025', '2026'), '2025');
+});
+
+test('una clave que no es un periodo se devuelve tal cual en vez de romper', () => {
+  assert.equal(compareLabel('', '2026-09'), '');
+  assert.equal(compareLabel('2026-13', '2026-09'), '2026-13');
+  assert.equal(compareLabel('manana', '2026-09'), 'manana');
+});
+
+// ---------------------------------------------------------------------------
+// Lo que viene. Entra ya resumido para no acoplar el informe a los
+// recordatorios, y siempre dicho como prevision: si la IA que redacta encima lo
+// leyera como gasto ya hecho, aconsejaria sobre un mes que no existe.
+// ---------------------------------------------------------------------------
+
+const reportCon = (upcoming, period = '2026-09', today = '2026-09-13') =>
+  buildMonthReport({ period, today, budgets: [budget()], index: buildPeriodIndex([tx()]), savings: [], upcoming });
+
+test('el informe dice lo que viene sin contarlo como gasto', () => {
+  const r = reportCon({ pending: 3, amount: 540, overdue: 0 });
+  const texto = r.lines.join(' ');
+  assert.match(texto, /540€ en 3 recordatorios/);
+  assert.match(texto, /no están contados en el gasto de arriba/);
+});
+
+test('un recordatorio vencido se dice aparte', () => {
+  assert.match(reportCon({ pending: 2, amount: 100, overdue: 1 }).lines.join(' '), /Uno de ellos ya debería haber pasado/);
+  assert.match(reportCon({ pending: 3, amount: 100, overdue: 2 }).lines.join(' '), /2 de ellos ya deberían haber pasado/);
+});
+
+test('un mes que aun no ha empezado tambien avisa de lo que viene', () => {
+  const r = reportCon({ pending: 1, amount: 320, overdue: 0 }, '2026-11', '2026-09-13');
+  assert.equal(r.kind, 'future');
+  assert.match(r.lines.join(' '), /320€ en 1 recordatorio/);
+});
+
+test('sin recordatorios el informe es exactamente el de antes', () => {
+  const sin = report([tx()], [budget()], '2026-09', '2026-09-13');
+  const conCero = reportCon({ pending: 0, amount: 0, overdue: 0 });
+  assert.equal(sin.upcoming, null);
+  assert.equal(JSON.stringify(sin.lines), JSON.stringify(conCero.lines));
 });

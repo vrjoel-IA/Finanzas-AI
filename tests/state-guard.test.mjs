@@ -118,3 +118,22 @@ test('no muta ninguno de los dos estados', () => {
   assert.equal(JSON.stringify(antes), copiaAntes);
   assert.equal(JSON.stringify(despues), copiaDespues);
 });
+
+// ---------------------------------------------------------------------------
+// Los recordatorios de gastos son trabajo del usuario: los escribe a mano, uno a
+// uno, igual que un presupuesto. Perderlos de golpe tampoco es un guardado.
+// ---------------------------------------------------------------------------
+
+test('tambien protege los recordatorios de gastos', () => {
+  const antes = { transactions: [], accounts: [], savings: [], budgets: [], refunds: [], expenseReminders: [{ id: 'r1' }, { id: 'r2' }, { id: 'r3' }, { id: 'r4' }] };
+  const despues = { ...antes, expenseReminders: [] };
+  const veredicto = checkDestructiveWrite(antes, despues);
+  assert.equal(veredicto.destructive, true);
+  assert.match(veredicto.reason, /recordatorios/);
+});
+
+test('un estado sin recordatorios nunca se bloquea por ellos', () => {
+  const antes = { transactions: [{ id: 't1' }], accounts: [{ id: 'a1' }], savings: [], budgets: [], refunds: [] };
+  const despues = { ...antes, transactions: [{ id: 't1' }, { id: 't2' }] };
+  assert.equal(checkDestructiveWrite(antes, despues).destructive, false);
+});

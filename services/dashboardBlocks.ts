@@ -14,6 +14,9 @@ export const DASHBOARD_BLOCKS = [
   'evolution',
   'accounts',
   'budget',
+  // Al final: mergeLayout empuja los bloques nuevos al final del layout que ya
+  // tuviera el usuario, asi que aparece sin migrar nada ni escribir al arrancar.
+  'reminders',
 ];
 
 /**

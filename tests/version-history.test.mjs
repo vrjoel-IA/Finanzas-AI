@@ -65,3 +65,11 @@ test('aguanta estados nulos o corruptos', () => {
 test('la descripcion es legible', () => {
   assert.equal(V.describeSummary(guard.summarize(estado(12))), '12 movimientos, 2 cuentas, 1 huchas');
 });
+
+test('cambiar solo los recordatorios ya cuenta como trabajo del usuario', () => {
+  const antes = { transactions: [{ id: 't1' }], accounts: [{ id: 'a1' }], savings: [], budgets: [], refunds: [], expenseReminders: [] };
+  const despues = { ...antes, expenseReminders: [{ id: 'r1' }] };
+  const ultima = { at: 1, summary: guard.summarize(antes) };
+  const decision = V.shouldSnapshot(ultima, despues, 11 * 60 * 1000);
+  assert.equal(decision.snapshot, true);
+});

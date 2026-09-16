@@ -31,7 +31,8 @@ const differs = (a: StateSummary, b: StateSummary): boolean =>
   a.accounts !== b.accounts ||
   a.savings !== b.savings ||
   a.budgets !== b.budgets ||
-  a.refunds !== b.refunds;
+  a.refunds !== b.refunds ||
+  a.reminders !== b.reminders;
 
 /**
  * @param last    ultima version guardada en esta sesion, o null si no hay

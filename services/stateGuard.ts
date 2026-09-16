@@ -18,6 +18,7 @@ export interface StateSummary {
   savings: number;
   budgets: number;
   refunds: number;
+  reminders: number;
 }
 
 export interface DestructiveVerdict {
@@ -41,6 +42,7 @@ export function summarize(state: Partial<FinanceState> | null | undefined): Stat
     savings: count(s.savings),
     budgets: count(s.budgets),
     refunds: count(s.refunds),
+    reminders: count(s.expenseReminders),
   };
 }
 
@@ -50,6 +52,7 @@ const ES: Record<keyof StateSummary, string> = {
   savings: 'huchas',
   budgets: 'presupuestos',
   refunds: 'reembolsos',
+  reminders: 'recordatorios',
 };
 
 /**
@@ -73,7 +76,10 @@ export function checkDestructiveWrite(
   // Sin referencia previa no hay nada que proteger: es el primer guardado.
   if (!previous) return safe;
 
-  const keys: (keyof StateSummary)[] = ['transactions', 'accounts', 'savings', 'budgets', 'refunds'];
+  // Los recordatorios entran aqui por el mismo criterio que el resto: los
+  // escribe el usuario a mano, uno a uno. Anadir una clave es retrocompatible,
+  // porque un estado que no los tenia nunca dispara el aviso (had === 0).
+  const keys: (keyof StateSummary)[] = ['transactions', 'accounts', 'savings', 'budgets', 'refunds', 'reminders'];
   const losses: string[] = [];
 
   for (let i = 0; i < keys.length; i++) {

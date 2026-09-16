@@ -180,7 +180,7 @@ export const INITIAL_DATA = {
   manualContributions: {},
   currentDate: new Date().toISOString().substring(0, 7),
   viewMode: 'month',
-  dashboardLayout: ['balance', 'report', 'comparison', 'savings', 'evolution', 'accounts', 'budget'],
+  dashboardLayout: ['balance', 'report', 'comparison', 'savings', 'evolution', 'accounts', 'budget', 'reminders'],
   chatHistory: [],
   chatLastDate: ''
 };

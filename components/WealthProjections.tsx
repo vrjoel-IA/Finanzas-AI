@@ -1,7 +1,7 @@
 
 import React, { useMemo, useState } from 'react';
 import { useFinance } from '../App';
-import { projectRealistic, buildMonthPoints } from '../services/realisticProjection';
+import { projectRealistic, buildMonthPoints, explainRealistic } from '../services/realisticProjection';
 import { isMonthKey } from '../services/periods';
 import { 
   TrendingUp, 
@@ -175,7 +175,9 @@ const WealthProjections: React.FC = () => {
 
   // PROYECCION REALISTA: parte del historial de verdad, no del plan perfecto.
   // Usa la mediana del ahorro mensual observado, para que un mes atipico (una
-  // paga extra, una mudanza) no distorsione la estimacion.
+  // mudanza, un mes de gasto raro) no distorsione lo que se considera un mes
+  // normal. Las pagas extra no se descartan: se aislan y se suman aparte, una
+  // vez al anio, porque una estimacion que se las deja fuera no es realista.
   const realistic = useMemo(() => {
     const endMonth = isMonthKey(currentDate) ? currentDate : currentDate.slice(0, 4) + '-12';
     const history = buildMonthPoints(viewIndex, endMonth, 24);
@@ -197,6 +199,8 @@ const WealthProjections: React.FC = () => {
       volatilityK: 1,
     });
   }, [viewIndex, currentDate, savings, metrics.totalInAccounts, metrics.totalInSavings, getSavingHistoricalBalance]);
+
+  const explanation = useMemo(() => explainRealistic(realistic), [realistic]);
 
   // Ambas curvas sobre el mismo eje, para poder compararlas de un vistazo.
   const combinedData = useMemo(() => projectionData.map((point, index) => {
@@ -296,13 +300,13 @@ const WealthProjections: React.FC = () => {
             </div>
           </div>
 
-          <p className="text-xs text-slate-500 dark:text-slate-400 -mt-6 mb-8 leading-relaxed max-w-2xl">
+          {/* El texto de la proyeccion realista se redacta en el servicio: una
+              frase que afirma de donde sale un numero se puede probar. */}
+          <div className="text-xs text-slate-500 dark:text-slate-400 -mt-6 mb-8 leading-relaxed max-w-2xl space-y-1.5">
             {projectionMode === 'plan'
-              ? 'Si cumplieras el plan a rajatabla: aportas cada mes lo que has fijado y no pasa nada imprevisto.'
-              : realistic.insufficientData
-                ? 'Aún no hay historial suficiente para estimar tu ritmo real. Con tres meses de movimientos registrados aparecerá aquí.'
-                : `Basado en tus ${realistic.monthsUsed} meses con movimiento: ahorras ${Math.round(realistic.medianNetSavings).toLocaleString()}€ al mes en un mes normal, unos ${Math.round(realistic.oneYearEstimate).toLocaleString()}€ al año. La banda marca tus meses buenos y malos.`}
-          </p>
+              ? <p>Si cumplieras el plan a rajatabla: aportas cada mes lo que has fijado y no pasa nada imprevisto.</p>
+              : explanation.map((linea, i) => <p key={i}>{linea}</p>)}
+          </div>
           
           <div className="w-full h-[350px] md:h-[450px]">
             <ResponsiveContainer width="100%" height="100%">

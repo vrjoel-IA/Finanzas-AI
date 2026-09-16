@@ -7,14 +7,22 @@ import {
   CalendarRange, Sun, Moon, LineChart as LineChartIcon, 
   LogOut, Loader2, Sparkles, CloudCheck, CloudUpload, RefreshCw,
   ChevronLeft, ChevronRight, AlertTriangle, CloudOff,
-  RefreshCcw, Download, ShieldCheck, History
+  RefreshCcw, Download, Upload, ShieldCheck, History
 } from 'lucide-react';
-import { FinanceState, Account, Saving, Refund, Transaction, Budget, AIChallenge, ExtraSaving, ChatMessage, AuraReport } from './types';
+import { FinanceState, Account, Saving, Refund, Transaction, Budget, AIChallenge, ExtraSaving, ChatMessage, AuraReport, ExpenseReminder, ReminderFulfilment } from './types';
 import { INITIAL_DATA } from './constants';
 import { supabase } from './services/supabase';
 import { syncRefundsWithTransactions as syncRefunds } from './services/refunds';
+import {
+  upsertReminder,
+  removeReminder,
+  markDone as markReminderDoneIn,
+  clearDone as clearReminderDoneIn,
+  skipMonth as skipReminderMonthIn,
+  rejectMatch as rejectReminderMatchIn,
+} from './services/expenseReminders';
 import { checkDestructiveWrite, summarize } from './services/stateGuard';
-import { fullBackup, transactionsToCsv, backupFilename } from './services/exportData';
+import { fullBackup, transactionsToCsv, backupFilename, pickState, parseBackup } from './services/exportData';
 import { shouldSnapshot, describeSummary } from './services/versionHistory';
 import type { Snapshot } from './services/versionHistory';
 import type { DestructiveVerdict } from './services/stateGuard';
@@ -67,7 +75,8 @@ interface FinanceContextType extends FinanceState {
   getAccountHistoricalBalance: (accountId: string, dateStr: string) => number;
   getSavingHistoricalBalance: (savingId: string, dateStr: string) => number;
   getNetWorthHistorical: (dateStr: string) => number; 
-  addTransaction: (t: Omit<Transaction, 'id'>, myPart?: number) => void;
+  /** Devuelve el id del movimiento creado, para poder enlazarlo a un recordatorio. */
+  addTransaction: (t: Omit<Transaction, 'id'>, myPart?: number) => string;
   updateTransaction: (t: Transaction) => void;
   deleteTransaction: (id: string) => void;
   addAccount: (a: Omit<Account, 'id' | 'currentBalance'>) => void;
@@ -91,6 +100,16 @@ interface FinanceContextType extends FinanceState {
   setChallenges: (challenges: AIChallenge[]) => void;
   /** Guarda el comentario de Aura de un periodo. Solo al pulsar el boton, nunca al navegar. */
   saveAuraReport: (period: string, report: AuraReport) => void;
+
+  // Recordatorios de gastos futuros. Solo avisan: ninguna de estas funciones
+  // crea, modifica ni borra transacciones, ni toca ninguna cuenta.
+  saveReminder: (reminder: ExpenseReminder) => void;
+  deleteReminder: (id: string) => void;
+  /** Da por cumplido un mes concreto. No escribe nada fuera de expenseReminders. */
+  markReminderDone: (reminderId: string, month: string, fulfilment: ReminderFulfilment) => void;
+  clearReminderDone: (reminderId: string, month: string) => void;
+  skipReminderMonth: (reminderId: string, month: string, skipped: boolean) => void;
+  rejectReminderMatch: (reminderId: string, month: string, txId: string) => void;
   toggleTheme: () => void;
   updateChatHistory: (history: ChatMessage[]) => void;
   importBudgetFromMonth: (sourceDate: string, targetDate: string) => void;
@@ -135,6 +154,8 @@ interface FinanceContextType extends FinanceState {
   listVersions: () => Promise<{ id: number; created_at: string; tx_count: number; reason: string | null }[]>;
   /** Restaura una version. Sustituye el estado actual por el de esa fecha. */
   restoreVersion: (id: number) => Promise<boolean>;
+  /** Restaura una copia descargada. Pasa por la guardia y archiva antes lo que hay. */
+  restoreFromFile: (text: string) => Promise<{ ok: boolean; reason: string }>;
   loginAsGuest: () => void;
   retrySync: () => void;
   manualRefresh: () => Promise<void>;
@@ -477,6 +498,55 @@ const App: React.FC = () => {
     }
   }, [session]);
 
+  /**
+   * Restaura una copia descargada.
+   *
+   * Hasta ahora se podia bajar una copia y no habia forma de volver a subirla:
+   * parseBackup existia y no lo llamaba nadie. Pero restaurar es sustituir el
+   * estado entero, que es exactamente lo que destruyo los datos el 13/09, asi
+   * que pasa por lo mismo que todo lo demas: se archiva antes lo que hay, y si
+   * la copia trae menos datos de los que hay ahora, se para y decide el usuario.
+   */
+  const restoreFromFile = useCallback(async (text: string): Promise<{ ok: boolean; reason: string }> => {
+    const leido = parseBackup(text);
+    if (!leido) return { ok: false, reason: 'Ese fichero no es una copia de Finanzas Pro AI.' };
+
+    const recuperado = { ...INITIAL_DATA, ...leido } as FinanceState;
+    const actual = stateRef.current;
+
+    const veredicto = checkDestructiveWrite(actual, recuperado);
+    if (veredicto.destructive) {
+      setBlockedWrite(veredicto);
+      return { ok: false, reason: veredicto.reason + ' Revisa el aviso antes de continuar.' };
+    }
+
+    // Se archiva el estado de ahora ANTES de tocar nada: volver de una
+    // restauracion equivocada tiene que ser posible.
+    if (session?.user?.id) {
+      const resumenActual = summarize(actual);
+      if (resumenActual.transactions + resumenActual.accounts + resumenActual.savings > 0) {
+        await withTimeout<any>(
+          supabase.from('profile_versions').insert({
+            user_id: session.user.id,
+            state: actual,
+            tx_count: resumenActual.transactions,
+            reason: 'antes de restaurar un fichero',
+          }),
+          15000,
+        ).catch((e: any) => console.warn('[Restaurar] No se pudo archivar el estado actual:', e?.message || e));
+      }
+    }
+
+    overrideGuardRef.current = true;
+    lastSafeStateRef.current = recuperado;
+    setState(recuperado);
+    setBlockedWrite(null);
+    window.setTimeout(() => { overrideGuardRef.current = false; }, 5000);
+
+    const resumen = summarize(recuperado);
+    return { ok: true, reason: `Restaurados ${resumen.transactions} movimientos y ${resumen.accounts} cuentas.` };
+  }, [session]);
+
   const loginAsGuest = useCallback(() => {
     // Entrar en Modo Local con la sesion abierta fue lo que destruyo los datos
     // de un usuario: el guardado automatico miraba `session` antes que `isGuest`
@@ -758,6 +828,7 @@ const App: React.FC = () => {
     confirmBlockedWrite,
     listVersions,
     restoreVersion,
+    restoreFromFile,
     loginAsGuest,
     retrySync,
     manualRefresh,
@@ -840,7 +911,10 @@ const App: React.FC = () => {
       setState(prev => {
         let updatedRefunds = [...prev.refunds];
         if (t.type === 'expense' && t.isRefund) {
-          const refundId = 'ref_' + Date.now();
+          // Con sufijo aleatorio: confirmar dos gastos-reembolso en el mismo
+          // milisegundo daba dos deudas con el mismo id, y refunds.find se
+          // quedaba con una de las dos para siempre.
+          const refundId = 'ref_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6);
           const partToPay = myPart !== undefined ? myPart : t.amount / 2;
           updatedRefunds.push({ 
             id: refundId, name: t.description, totalAmount: t.amount, 
@@ -855,6 +929,8 @@ const App: React.FC = () => {
         const syncedRefunds = syncRefundsWithTransactions(nextTransactions, updatedRefunds);
         return { ...prev, transactions: nextTransactions, refunds: syncedRefunds };
       });
+
+      return id;
     },
     updateTransaction: (updatedTx) => {
       setState(prev => {
@@ -955,6 +1031,31 @@ const App: React.FC = () => {
     }),
     updateLayout: (newLayout) => setState(prev => ({ ...prev, dashboardLayout: newLayout })),
     setChallenges: (challenges) => setState(prev => ({ ...prev, challenges })),
+    saveReminder: (reminder) => setState(prev => ({
+      ...prev,
+      expenseReminders: upsertReminder(prev.expenseReminders || [], reminder),
+    })),
+    deleteReminder: (id) => setState(prev => ({
+      ...prev,
+      expenseReminders: removeReminder(prev.expenseReminders || [], id),
+    })),
+    markReminderDone: (reminderId, month, fulfilment) => setState(prev => ({
+      ...prev,
+      expenseReminders: markReminderDoneIn(prev.expenseReminders || [], reminderId, month, fulfilment),
+    })),
+    clearReminderDone: (reminderId, month) => setState(prev => ({
+      ...prev,
+      expenseReminders: clearReminderDoneIn(prev.expenseReminders || [], reminderId, month),
+    })),
+    skipReminderMonth: (reminderId, month, skipped) => setState(prev => ({
+      ...prev,
+      expenseReminders: skipReminderMonthIn(prev.expenseReminders || [], reminderId, month, skipped),
+    })),
+    rejectReminderMatch: (reminderId, month, txId) => setState(prev => ({
+      ...prev,
+      expenseReminders: rejectReminderMatchIn(prev.expenseReminders || [], reminderId, month, txId),
+    })),
+
     saveAuraReport: (period, report) => setState(prev => ({
       ...prev,
       auraReports: { ...(prev.auraReports || {}), [period]: report },
@@ -1032,7 +1133,7 @@ const App: React.FC = () => {
       const periods: string[] = Array.from(new Set(state.budgets.filter(b => isMonthKey(b.period)).map(b => b.period as string)));
       return periods.sort((a, b) => b.localeCompare(a));
     },
-  }), [state, isGuest, isSyncing, syncError, blockedWrite, confirmBlockedWrite, listVersions, restoreVersion, undoCount, budgetUndoCount, getAccountHistoricalBalance, getSavingHistoricalBalance, getNetWorthHistorical, periodIndex, getPeriodAggregate, viewIndex, amountView, hasSharedAccounts, getOwnedAccountBalance, loginAsGuest, retrySync, manualRefresh, saveData, syncRefundsWithTransactions]);
+  }), [state, isGuest, isSyncing, syncError, blockedWrite, confirmBlockedWrite, listVersions, restoreVersion, restoreFromFile, undoCount, budgetUndoCount, getAccountHistoricalBalance, getSavingHistoricalBalance, getNetWorthHistorical, periodIndex, getPeriodAggregate, viewIndex, amountView, hasSharedAccounts, getOwnedAccountBalance, loginAsGuest, retrySync, manualRefresh, saveData, syncRefundsWithTransactions]);
 
   if (isAppInitializing) { 
     return (
@@ -1101,24 +1202,47 @@ const descargarTexto = (contenido: string, nombre: string, tipo: string) => {
 const BackupBox = () => {
   const state = useFinance();
   const [hecho, setHecho] = useState<string | null>(null);
+  const [aviso, setAviso] = useState<string | null>(null);
+  const [confirmandoRestaurar, setConfirmandoRestaurar] = useState(false);
+  const ficheroRef = useRef<HTMLInputElement>(null);
 
   const marcar = (texto: string) => {
     setHecho(texto);
     window.setTimeout(() => setHecho(null), 2500);
   };
 
+  // Restaurar sustituye el estado entero, que es justo lo que destruyo los datos
+  // el 13/09. Por eso pide un segundo toque antes de abrir siquiera el selector.
+  const pedirFichero = () => {
+    if (!confirmandoRestaurar) {
+      setConfirmandoRestaurar(true);
+      window.setTimeout(() => setConfirmandoRestaurar(false), 5000);
+      return;
+    }
+    setConfirmandoRestaurar(false);
+    ficheroRef.current?.click();
+  };
+
+  const alElegirFichero = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    setAviso(null);
+    try {
+      const texto = await file.text();
+      const resultado = await state.restoreFromFile(texto);
+      if (resultado.ok) marcar(resultado.reason);
+      else setAviso(resultado.reason);
+    } catch (err) {
+      setAviso('No se ha podido leer el fichero.');
+    }
+  };
+
   const descargarCopia = () => {
     const ahora = new Date();
-    const plano = {
-      accounts: state.accounts, savings: state.savings, refunds: state.refunds,
-      transactions: state.transactions, budgets: state.budgets, challenges: state.challenges,
-      extraSavings: state.extraSavings, manualContributions: state.manualContributions,
-      currentDate: state.currentDate, viewMode: state.viewMode,
-      dashboardLayout: state.dashboardLayout, theme: state.theme,
-      chatHistory: state.chatHistory, chatLastDate: state.chatLastDate,
-      budgetExclusions: state.budgetExclusions, auraReports: state.auraReports,
-    };
-    descargarTexto(fullBackup(plano, ahora), backupFilename('finanzas-copia', 'json', ahora), 'application/json');
+    // pickState conoce las claves del estado. Enumerarlas aqui a mano hacia que
+    // cada coleccion nueva se quedara fuera de la copia.
+    descargarTexto(fullBackup(pickState(state as any), ahora), backupFilename('finanzas-copia', 'json', ahora), 'application/json');
     marcar('Copia descargada');
   };
 
@@ -1156,8 +1280,22 @@ const BackupBox = () => {
         >
           Movimientos en CSV
         </button>
+        {/* Bajar una copia y no poder volver a subirla no es una copia de
+            seguridad. Pasa por la guardia y archiva antes el estado de ahora. */}
+        <button
+          onClick={pedirFichero}
+          className={`w-full flex items-center justify-center gap-2 py-2 rounded-xl text-[10px] font-bold uppercase tracking-widest transition-colors border ${
+            confirmandoRestaurar
+              ? 'bg-amber-500 text-white border-amber-500'
+              : 'bg-white dark:bg-slate-800 text-slate-500 dark:text-slate-400 border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-700'
+          }`}
+        >
+          <Upload size={12} /> {confirmandoRestaurar ? 'Sustituirá tus datos: pulsa otra vez' : 'Restaurar una copia'}
+        </button>
+        <input ref={ficheroRef} type="file" accept="application/json,.json" onChange={alElegirFichero} className="hidden" />
       </div>
       {hecho && <p className="text-[10px] font-bold text-emerald-600 dark:text-emerald-400 text-center mt-2">{hecho}</p>}
+      {aviso && <p className="text-[10px] font-bold text-rose-600 dark:text-rose-400 text-center mt-2 leading-relaxed">{aviso}</p>}
       {!state.isGuest && <VersionHistory />}
     </div>
   );
@@ -1264,16 +1402,7 @@ const GuardBanner = () => {
   // pasar un guardado que destruye datos, se ofrece llevarselos al disco.
   const descargarAntesDeContinuar = () => {
     const ahora = new Date();
-    const plano = {
-      accounts: finance.accounts, savings: finance.savings, refunds: finance.refunds,
-      transactions: finance.transactions, budgets: finance.budgets, challenges: finance.challenges,
-      extraSavings: finance.extraSavings, manualContributions: finance.manualContributions,
-      currentDate: finance.currentDate, viewMode: finance.viewMode,
-      dashboardLayout: finance.dashboardLayout, theme: finance.theme,
-      chatHistory: finance.chatHistory, chatLastDate: finance.chatLastDate,
-      budgetExclusions: finance.budgetExclusions, auraReports: finance.auraReports,
-    };
-    descargarTexto(fullBackup(plano, ahora), backupFilename('finanzas-copia', 'json', ahora), 'application/json');
+    descargarTexto(fullBackup(pickState(finance as any), ahora), backupFilename('finanzas-copia', 'json', ahora), 'application/json');
   };
   if (!blockedWrite) return null;
   const { before, after, reason } = blockedWrite;

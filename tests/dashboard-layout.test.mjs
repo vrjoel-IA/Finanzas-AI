@@ -32,7 +32,7 @@ test('los bloques antiguos se traducen a su sustituto en su misma posicion', () 
   const guardado = ['balance', 'challenges', 'savings', 'chart', 'accounts', 'budget'];
   assert.equal(
     asText(mergeLayout(guardado)),
-    asText(['balance', 'report', 'savings', 'evolution', 'accounts', 'budget', 'comparison']),
+    asText(['balance', 'report', 'savings', 'evolution', 'accounts', 'budget', 'comparison', 'reminders']),
   );
 });
 

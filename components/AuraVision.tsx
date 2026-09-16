@@ -61,11 +61,15 @@ export const AuraVisionProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     try {
       const base64 = await readAsBase64(file);
       const items = await analyzeReceipt(base64, file.type || undefined);
-      const reversedItems = [...(Array.isArray(items) ? items : [])].reverse();
-      if (reversedItems.length > 0) {
+      // Se conserva el orden de la imagen: la tira de navegacion del modal
+      // numera los movimientos como se ven en la captura. Antes se invertia para
+      // imponer un orden de proceso, pero ahora se puede ir y volver entre los
+      // pendientes, asi que ese orden ya no decide nada.
+      const scanned = Array.isArray(items) ? items : [];
+      if (scanned.length > 0) {
         // Iniciar batch de undo para toda la sesión de escaneo
         startUndoBatch();
-        setQueue(reversedItems);
+        setQueue(scanned);
       } else {
         setError('Aura no ha encontrado movimientos en esa imagen.');
       }

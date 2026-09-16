@@ -102,6 +102,34 @@ export function budgetsToCsv(state: Partial<FinanceState>): string {
 }
 
 /**
+ * Las claves que forman el documento del usuario.
+ *
+ * Estaban enumeradas a mano en DOS sitios de App.tsx (la caja de copias y el
+ * aviso de la guardia). Cada coleccion nueva se olvidaba en uno de los dos y la
+ * copia salia incompleta sin que nadie se enterase hasta necesitarla.
+ */
+export const STATE_KEYS: (keyof FinanceState)[] = [
+  'accounts', 'savings', 'refunds', 'transactions', 'budgets', 'challenges',
+  'extraSavings', 'manualContributions', 'currentDate', 'viewMode',
+  'dashboardLayout', 'theme', 'chatHistory', 'chatLastDate',
+  'budgetExclusions', 'auraReports', 'expenseReminders',
+];
+
+/**
+ * Se queda solo con las claves del estado. Hace falta porque useFinance()
+ * devuelve el estado y las funciones mezclados, y las funciones no se serializan.
+ */
+export function pickState(source: Record<string, unknown> | null | undefined): Partial<FinanceState> {
+  const out: Record<string, unknown> = {};
+  if (!source) return out as Partial<FinanceState>;
+  for (let i = 0; i < STATE_KEYS.length; i++) {
+    const key = STATE_KEYS[i] as string;
+    if (source[key] !== undefined) out[key] = source[key];
+  }
+  return out as Partial<FinanceState>;
+}
+
+/**
  * Copia completa en JSON. Es la que sirve para restaurar: lleva todo el estado
  * tal cual, mas metadatos para saber de cuando es y que contiene.
  */

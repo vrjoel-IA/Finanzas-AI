@@ -19,6 +19,16 @@ export interface MonthPoint {
   netSavings: number;
 }
 
+/** Un mes con ingreso muy por encima de lo habitual: paga extra, bonus, atrasos. */
+export interface ExtraIncomeMonth {
+  key: MonthKey;
+  income: number;
+  /** Cuanto supera el ingreso de ese mes al del mes tipico. */
+  incomeExcess: number;
+  /** Cuanto de ese exceso acabo quedandose de verdad. Nunca negativo. */
+  savedExcess: number;
+}
+
 export interface RealisticInput {
   months: MonthPoint[];
   seedLiquid: number;
@@ -36,6 +46,10 @@ export interface RealisticInput {
    * dos veces. Se expone para poder tensar el escenario a proposito.
    */
   contingencyPerYear?: number;
+  /** Cuanto tiene que superar el ingreso al mes tipico para ser "extra". Por defecto 1.25. */
+  extraIncomeRatio?: number;
+  /** Suelo absoluto en euros para lo mismo. Por defecto 200. */
+  extraIncomeFloor?: number;
 }
 
 export interface ProjectionPoint {
@@ -62,13 +76,88 @@ export interface RealisticResult {
   irregularExpenseBuffer: number;
   /** Proporcion del ingreso que acaba ahorrada. */
   savingsRate: number;
-  /** Ahorro estimado en los proximos doce meses. */
+  /** Ingreso del mes tipico. */
+  medianIncome: number;
+  /**
+   * Desviacion de los meses NORMALES, sin los de ingreso extra. Es la que dibuja
+   * la banda: una paga extra no es "un mes bueno", es otra categoria de mes, y
+   * metiendola aqui ensanchaba la banda y hundia el escenario pesimista.
+   */
+  stdDevTypical: number;
+  /** Pagas extra, bonus o atrasos detectados en la ventana observada. */
+  extraIncomeMonths: ExtraIncomeMonth[];
+  /** Suma de savedExcess observada en la ventana. */
+  extraSavedObserved: number;
+  /** La misma cifra llevada a doce meses. 0 si no hay historial suficiente. */
+  extraSavedPerYear: number;
+  /** Los ingresos han cambiado de nivel (una subida), no hay pagas extra que aislar. */
+  incomeLevelChanged: boolean;
+  /** Doce meses normales, sin extras: medianNetSavings * 12. */
+  typicalYearEstimate: number;
+  /** Ahorro estimado en los proximos doce meses: los doce meses normales mas los extras. */
   oneYearEstimate: number;
   points: ProjectionPoint[];
 }
 
 const MIN_MONTHS = 3;
 const LOW_CONFIDENCE_MONTHS = 6;
+
+// Deteccion de pagas extra.
+//
+// La mediana describe el mes normal, y eso esta bien: un mes raro no debe mover
+// la cifra de "lo que ahorro al mes". Pero la estimacion ANUAL calculada como
+// mediana x 12 se deja fuera las pagas extra, y entonces no es realista: es un
+// suelo. Aqui se aislan esos meses para poder sumarlos aparte.
+
+/** Cuanto tiene que superar el ingreso al del mes tipico. Una paga extra dobla la nomina. */
+export const EXTRA_INCOME_RATIO = 1.25;
+/** Suelo en euros: con una mediana baja, el 25% son cuatro duros y entraria cualquier venta suelta. */
+export const EXTRA_INCOME_FLOOR = 200;
+/** Por debajo de esto la mediana se calcula sobre muy pocos puntos y anualizar multiplica el error. */
+export const EXTRA_MIN_MONTHS = 6;
+/**
+ * Si mas de un tercio de los meses sale "extra", no hay pagas extra: es que el
+ * ingreso ha cambiado de nivel (una subida de sueldo). Dos pagas extra al anio
+ * son 2 de 12, asi que el umbral deja sitio de sobra.
+ */
+export const EXTRA_MAX_SHARE = 0.34;
+
+/**
+ * Aisla los meses de ingreso atipico y calcula cuanto de ese exceso se quedo.
+ *
+ * Lo que se suma NO es el exceso de ingreso, es el exceso de AHORRO: si entran
+ * 1.400 de paga extra y ese mes se pagan 500 del seguro, lo que se queda en el
+ * patrimonio son 900. Con suelo en 0 (paga extra gastada entera: suma nada) y
+ * techo en el propio exceso de ingreso (un mes de gasto bajo no es merito de la
+ * paga extra).
+ */
+export function detectExtraIncomeMonths(
+  months: MonthPoint[],
+  medianIncome: number,
+  medianNetSavings: number,
+  ratio: number = EXTRA_INCOME_RATIO,
+  floor: number = EXTRA_INCOME_FLOOR,
+): { extras: ExtraIncomeMonth[]; incomeLevelChanged: boolean } {
+  const none = { extras: [] as ExtraIncomeMonth[], incomeLevelChanged: false };
+  if (!Array.isArray(months) || months.length < EXTRA_MIN_MONTHS) return none;
+  if (!(medianIncome > 0)) return none;
+
+  const extras: ExtraIncomeMonth[] = [];
+  for (let i = 0; i < months.length; i++) {
+    const month = months[i];
+    const income = Number(month.income) || 0;
+    const incomeExcess = income - medianIncome;
+    if (income < medianIncome * ratio || incomeExcess < floor) continue;
+    const savingsExcess = (Number(month.netSavings) || 0) - medianNetSavings;
+    const savedExcess = Math.max(0, Math.min(savingsExcess, incomeExcess));
+    extras.push({ key: month.key, income, incomeExcess, savedExcess });
+  }
+
+  if (extras.length > months.length * EXTRA_MAX_SHARE) {
+    return { extras: [], incomeLevelChanged: true };
+  }
+  return { extras, incomeLevelChanged: false };
+}
 
 function sortedValues(values: number[]): number[] {
   return values.slice().sort((a, b) => a - b);
@@ -144,6 +233,19 @@ export function projectRealistic(input: RealisticInput): RealisticResult {
   const irregularExpenseBuffer = Math.max(0, percentile(expenses, 0.75) - medianExpense);
   const savingsRate = medianIncome > 0 ? medianNetSavings / medianIncome : 0;
 
+  // Los meses de paga extra se apartan: no ensanchan la banda y su exceso de
+  // ahorro se suma aparte, una vez al anio.
+  const ratio = input.extraIncomeRatio === undefined ? EXTRA_INCOME_RATIO : Number(input.extraIncomeRatio) || EXTRA_INCOME_RATIO;
+  const floor = input.extraIncomeFloor === undefined ? EXTRA_INCOME_FLOOR : Number(input.extraIncomeFloor) || 0;
+  const detected = detectExtraIncomeMonths(months, medianIncome, medianNetSavings, ratio, floor);
+  const extraKeys: Record<string, boolean> = {};
+  for (let i = 0; i < detected.extras.length; i++) extraKeys[detected.extras[i].key] = true;
+  const typicalSavings = months.filter(m => !extraKeys[m.key]).map(m => m.netSavings);
+  const deviationTypical = stdDev(typicalSavings.length >= 2 ? typicalSavings : savings);
+  const extraSavedObserved = detected.extras.reduce((sum, e) => sum + e.savedExcess, 0);
+  const extraSavedPerYear = months.length ? (extraSavedObserved * 12) / months.length : 0;
+  const typicalYearEstimate = medianNetSavings * 12;
+
   const base: RealisticResult = {
     insufficientData: months.length < MIN_MONTHS,
     lowConfidence: months.length >= MIN_MONTHS && months.length < LOW_CONFIDENCE_MONTHS,
@@ -156,16 +258,23 @@ export function projectRealistic(input: RealisticInput): RealisticResult {
     medianExpense,
     irregularExpenseBuffer,
     savingsRate,
-    oneYearEstimate: medianNetSavings * 12,
+    medianIncome,
+    stdDevTypical: deviationTypical,
+    extraIncomeMonths: detected.extras,
+    extraSavedObserved,
+    extraSavedPerYear,
+    incomeLevelChanged: detected.incomeLevelChanged,
+    typicalYearEstimate,
+    oneYearEstimate: typicalYearEstimate + extraSavedPerYear,
     points: [],
   };
 
   if (base.insufficientData) return base;
 
   const scenarios = [
-    { name: 'low' as const, monthly: medianNetSavings - k * deviation },
+    { name: 'low' as const, monthly: medianNetSavings - k * deviationTypical },
     { name: 'base' as const, monthly: medianNetSavings },
-    { name: 'high' as const, monthly: medianNetSavings + k * deviation },
+    { name: 'high' as const, monthly: medianNetSavings + k * deviationTypical },
   ];
 
   const seedLiquid = Number(input.seedLiquid) || 0;
@@ -185,6 +294,11 @@ export function projectRealistic(input: RealisticInput): RealisticResult {
       const inflationDrag = medianExpense * (Math.pow(1 + inflation / 100, year) - 1);
       const monthly = scenario.monthly - inflationDrag;
       for (let m = 0; m < 12; m++) capital = capital * (1 + monthlyRate) + monthly;
+      // Las pagas extra, al cierre y sin capitalizar los meses en que aun no
+      // habian llegado: la lectura conservadora. Suman igual en los tres
+      // escenarios, que es un desplazamiento limpio de la banda porque la banda
+      // ya no incluye esos meses.
+      capital += extraSavedPerYear;
       capital -= contingency;
       series.push(seedLiquid + capital);
     }
@@ -206,4 +320,80 @@ export function projectRealistic(input: RealisticInput): RealisticResult {
 
   base.points = points;
   return base;
+}
+
+// ---------------------------------------------------------------------------
+// El texto que acompana a la proyeccion.
+//
+// Vive aqui y no en el componente por lo mismo que describe() en monthReport:
+// una frase que afirma de donde sale un numero es codigo que se puede probar. Y
+// el formato se hace a mano, sin toLocaleString, para que no dependa del idioma
+// del dispositivo ni del ICU que tenga instalado quien ejecute los tests.
+// ---------------------------------------------------------------------------
+
+const SHORT_MONTHS = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic'];
+
+function shortMonth(key: string): string {
+  const month = Number(String(key).slice(5, 7));
+  if (!month || month < 1 || month > 12) return String(key);
+  return SHORT_MONTHS[month - 1] + ' ' + String(key).slice(0, 4);
+}
+
+function euros(value: number): string {
+  const rounded = Math.round(Number(value) || 0);
+  const digits = String(Math.abs(rounded));
+  let out = '';
+  for (let i = 0; i < digits.length; i++) {
+    if (i > 0 && (digits.length - i) % 3 === 0) out += '.';
+    out += digits.charAt(i);
+  }
+  return (rounded < 0 ? '-' : '') + out + ' €';
+}
+
+/**
+ * Las frases que explican la estimacion: de donde sale cada cifra y, sobre todo,
+ * que NO entra. Sin la ultima linea, cualquiera puede leer la proyeccion como si
+ * incluyera los traspasos entre cuentas.
+ */
+export function explainRealistic(result: RealisticResult): string[] {
+  if (!result || result.insufficientData) {
+    return ['Aún no hay historial suficiente para estimar tu ritmo real. Con tres meses de movimientos registrados aparecerá aquí.'];
+  }
+
+  const lines: string[] = [];
+  lines.push(
+    `Basado en tus ${result.monthsUsed} meses con movimiento: en un mes normal te quedan ${euros(result.medianNetSavings)}. ` +
+    'Es la mediana y no la media, para que un mes raro no la mueva.',
+  );
+
+  const extras = result.extraIncomeMonths || [];
+  if (result.incomeLevelChanged) {
+    lines.push('Tus ingresos han subido de nivel durante estos meses, así que no he separado ninguna paga extra: lo que ves es tu ritmo reciente.');
+  } else if (result.monthsUsed < EXTRA_MIN_MONTHS) {
+    lines.push(`Con menos de ${EXTRA_MIN_MONTHS} meses todavía no busco pagas extra. En cuanto haya más historial se sumarán aparte.`);
+  } else if (extras.length) {
+    const cuantos = extras.length === 1 ? 'un mes' : `${extras.length} meses`;
+    lines.push(
+      `Además hubo ${cuantos} con ingresos muy por encima de lo habitual (${extras.map(e => shortMonth(e.key)).join(', ')}) ` +
+      `y de ese extra se quedaron ${euros(result.extraSavedObserved)}, unos ${euros(result.extraSavedPerYear)} al año.`,
+    );
+  } else {
+    lines.push('No he encontrado pagas extra ni ingresos atípicos en este historial: todos tus meses se parecen.');
+  }
+
+  if (extras.length && !result.incomeLevelChanged) {
+    lines.push(
+      `Total estimado: ${euros(result.oneYearEstimate)} al año = ${euros(result.typicalYearEstimate)} de doce meses normales ` +
+      `+ ${euros(result.extraSavedPerYear)} de ingresos extra. La banda marca tus meses buenos y malos.`,
+    );
+  } else {
+    lines.push(`Total estimado: ${euros(result.oneYearEstimate)} al año. La banda marca tus meses buenos y malos.`);
+  }
+
+  lines.push(
+    'No entran aquí los traspasos entre cuentas, que cambian el dinero de sitio sin crearlo, ni las retiradas de huchas. ' +
+    'Lo que mueves a una hucha sí cuenta como ahorro tuyo, no como gasto.',
+  );
+
+  return lines;
 }

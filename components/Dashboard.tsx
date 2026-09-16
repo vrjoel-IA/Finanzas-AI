@@ -2,7 +2,13 @@
 import React, { useMemo, useState } from 'react';
 import { useFinance } from '../App';
 import { useNavigate } from 'react-router-dom';
+import ReminderModal from './ReminderModal';
+import { remindersForPeriod, summarizeReminders, suggestMatches } from '../services/expenseReminders';
+import type { ReminderOccurrence } from '../services/expenseReminders';
+import type { ExpenseReminder } from '../types';
 import {
+  CalendarClock,
+  Plus,
   TrendingUp,
   TrendingDown,
   PiggyBank,
@@ -47,7 +53,7 @@ import { isMonthKey, isYearKey, monthRange, shiftMonth, sameMonthPreviousYear } 
 import { mergeLayout } from '../services/dashboardBlocks';
 import { budgetStatus } from '../services/budgetPlan';
 import type { BudgetType } from '../services/budgetPlan';
-import { buildMonthReport, periodLabel } from '../services/monthReport';
+import { buildMonthReport, compareLabel, periodLabel } from '../services/monthReport';
 import type { WatchItem } from '../services/monthReport';
 import { budgetRowTone } from './budgetTone';
 
@@ -100,15 +106,24 @@ const Dashboard: React.FC = () => {
     theme,
     auraReports,
     saveAuraReport,
+    expenseReminders,
+    markReminderDone,
+    clearReminderDone,
+    skipReminderMonth,
+    rejectReminderMatch,
   } = useFinance();
 
   const navigate = useNavigate();
   const [isEditMode, setIsEditMode] = useState(false);
-  // Abierto por defecto: las tarjetas de Ingresos, Gastos y Ahorro son la
-  // entrada a cada pestaña de Presupuestos y no deben quedar escondidas.
-  const [showBreakdown, setShowBreakdown] = useState(true);
+  // Plegado por defecto: la fila inferior ya canta Saldo Anterior, Resultado y
+  // Liquidez, y el desglose de tres tarjetas solo hace falta cuando se busca.
+  // Es estado de sesion a proposito: no se persiste ni viaja a la nube.
+  const [showBreakdown, setShowBreakdown] = useState(false);
   const [selectedBudgetForDetails, setSelectedBudgetForDetails] = useState<DashboardBudget | null>(null);
   const [isBudgetsExpanded, setIsBudgetsExpanded] = useState(false);
+  // Modal de recordatorios: 'nuevo' para crear, uno concreto para editar, null
+  // para la lista de gestion, y undefined para no mostrarlo.
+  const [reminderEditing, setReminderEditing] = useState<ExpenseReminder | 'nuevo' | null | undefined>(undefined);
   const [budgetTab, setBudgetTab] = useState<BudgetType>('expense');
   const [budgetView, setBudgetView] = useState<'list' | 'chart'>('list');
   const [evolutionMode, setEvolutionMode] = useState<EvolutionMode>('networth');
@@ -250,12 +265,55 @@ const Dashboard: React.FC = () => {
   }, [budgets]);
 
   // ---------------------------------------------------------------------------
-  // Informe de Aura
+  // Recordatorios de gastos que vienen.
+  //
+  // Se CALCULA cual toca este periodo, no se escribe nada: mirar el dashboard no
+  // puede dar nada por hecho ni dejar rastro.
   // ---------------------------------------------------------------------------
   const today = todayKey();
+
+  const knownTxIds = useMemo(() => {
+    const index: Record<string, boolean> = {};
+    for (let i = 0; i < transactions.length; i++) index[transactions[i].id] = true;
+    return index;
+  }, [transactions]);
+
+  const reminderOccurrences = useMemo(
+    () => remindersForPeriod({ reminders: expenseReminders, period: currentDate, today, knownTxIds }),
+    [expenseReminders, currentDate, today, knownTxIds],
+  );
+  const reminderSummary = useMemo(() => summarizeReminders(reminderOccurrences), [reminderOccurrences]);
+
+  // Movimientos del periodo, para buscar el cargo que quizá cierra cada aviso.
+  const periodTransactions = useMemo(
+    () => transactions.filter(t => String(t.date || '').startsWith(currentDate)),
+    [transactions, currentDate],
+  );
+
+  // Los ya enlazados a un recordatorio no se proponen para otro.
+  const linkedTxIds = useMemo(() => {
+    const ids: string[] = [];
+    for (let i = 0; i < reminderOccurrences.length; i++) {
+      const f = reminderOccurrences[i].fulfilment;
+      if (f && f.txId) ids.push(f.txId);
+    }
+    return ids;
+  }, [reminderOccurrences]);
+
+  // ---------------------------------------------------------------------------
+  // Informe de Aura
+  // ---------------------------------------------------------------------------
+  // Los recordatorios entran ya resumidos y se cuentan aparte del gasto del mes:
+  // son una prevision, no dinero que haya salido.
+  const upcoming = useMemo(() => ({
+    pending: reminderSummary.pending,
+    amount: reminderSummary.pendingAmount,
+    overdue: reminderSummary.overdue,
+  }), [reminderSummary]);
+
   const report = useMemo(
-    () => buildMonthReport({ period: currentDate, today, budgets, index: viewIndex, savings }),
-    [currentDate, today, budgets, viewIndex, savings],
+    () => buildMonthReport({ period: currentDate, today, budgets, index: viewIndex, savings, upcoming }),
+    [currentDate, today, budgets, viewIndex, savings, upcoming],
   );
   const savedComment = auraReports ? auraReports[currentDate] : undefined;
   const commentIsStale = !!savedComment && (savedComment.kind !== report.kind || savedComment.txCount !== report.txCount);
@@ -273,6 +331,8 @@ const Dashboard: React.FC = () => {
         periodoAnterior: snapshot.previous, media3Meses: snapshot.typical, presupuestoGasto: snapshot.expenseBudget,
         vigilar: snapshot.watch, excedidos: snapshot.overCount, ingresos: snapshot.incomeGoal,
         objetivosAhorro: snapshot.savingGoals, sinPresupuesto: snapshot.unbudgeted, resumen: snapshot.lines,
+        // Prevision, no gasto hecho: el resumen de arriba ya lo dice con esas palabras.
+        proximosGastos: snapshot.upcoming,
       });
       saveAuraReport(period, {
         kind: snapshot.kind,
@@ -549,7 +609,11 @@ const Dashboard: React.FC = () => {
         );
       case 'comparison': {
         const isMonth = isMonthKey(currentDate);
-        const compareLabel = isMonth ? capitalize(periodLabel(comparePeriod)) : comparePeriod;
+        // Dos etiquetas para el mismo periodo: la larga titula el widget y la
+        // corta acompana a cada cifra, donde repetir el anio solo estorba.
+        const compareLong = isMonth ? capitalize(periodLabel(comparePeriod)) : comparePeriod;
+        const compareShort = compareLabel(comparePeriod, currentDate);
+        const actualLong = isMonth ? capitalize(periodLabel(currentDate)) : currentDate;
         return (
           <div key={key} className={cardClass}>
             {moveControls}
@@ -557,10 +621,10 @@ const Dashboard: React.FC = () => {
               <div className="w-10 h-10 bg-sky-50 dark:bg-sky-900/40 text-sky-600 dark:text-sky-400 rounded-xl flex items-center justify-center transition-colors shrink-0"><GitCompareArrows size={20} /></div>
               <div className="min-w-0">
                 <h3 className="font-bold text-slate-800 dark:text-slate-100">Comparativa</h3>
-                <p className="text-[10px] text-slate-400 dark:text-slate-500 font-bold uppercase tracking-widest truncate">{isMonth ? capitalize(periodLabel(currentDate)) : currentDate} vs {compareLabel}</p>
+                <p className="text-[10px] text-slate-400 dark:text-slate-500 font-bold uppercase tracking-widest truncate">{actualLong} vs {compareLong}</p>
               </div>
             </div>
-            <div className="flex flex-wrap items-center gap-2 mb-5">
+            <div className="flex flex-wrap items-center gap-2 mb-2">
               <div className="flex gap-1 bg-slate-100 dark:bg-slate-800 p-1 rounded-xl">
                 <button onClick={() => setCompareMode('previous')} className={pill(compareMode === 'previous')}>{isMonth ? 'Mes anterior' : 'Año anterior'}</button>
                 {isMonth && <button onClick={() => setCompareMode('lastYear')} className={pill(compareMode === 'lastYear')}>Hace un año</button>}
@@ -584,6 +648,10 @@ const Dashboard: React.FC = () => {
                 </select>
               ))}
             </div>
+            {/* El color dice cosas opuestas segun la fila: en Gastos, bajar es bueno. */}
+            <p className="text-[10px] text-slate-400 dark:text-slate-500 leading-relaxed mb-4">
+              El verde es siempre lo bueno: más ingresos y más ahorro, pero menos gastos.
+            </p>
             <div className="space-y-2.5">
               {comparison.map(row => {
                 const isFlat = Math.abs(row.delta) < 0.005;
@@ -603,12 +671,17 @@ const Dashboard: React.FC = () => {
                     <div>
                       <p className="text-[10px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-widest">{row.label}</p>
                       <p className="text-lg font-black text-slate-900 dark:text-white">{euros(row.current)}</p>
-                      <p className="text-[10px] text-slate-400 dark:text-slate-500 font-medium">Entonces: {euros(row.previous)}</p>
+                      <p className="text-[10px] text-slate-400 dark:text-slate-500 font-medium"><span className="font-bold">{compareShort}</span>: {euros(row.previous)}</p>
                     </div>
-                    <div className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-black ${tone}`}>
+                    <div
+                      className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-black ${tone}`}
+                      title={row.percent === null && !isFlat ? `No hay con qué comparar: en ${compareShort} fue 0 €` : undefined}
+                    >
                       {isFlat ? <Minus size={14} /> : row.delta > 0 ? <ArrowUpRight size={14} /> : <ArrowDownRight size={14} />}
+                      {/* Sin base con la que comparar no hay porcentaje. Decia "Nuevo",
+                          que de unos gastos que pasan de 0 a 300 no informa de nada. */}
                       {row.percent === null
-                        ? (isFlat ? 'Igual' : 'Nuevo')
+                        ? (isFlat ? 'Igual' : '—')
                         : `${row.percent > 0 ? '+' : ''}${row.percent.toFixed(0)}%`}
                     </div>
                   </button>
@@ -621,6 +694,13 @@ const Dashboard: React.FC = () => {
       case 'evolution': {
         const axisTick = { fontSize: 10, fill: theme === 'dark' ? '#64748b' : '#94a3b8' };
         const grid = theme === 'dark' ? '#1e293b' : '#f1f5f9';
+        // Este widget mira hacia atras y no proyecta nada, asi que aqui no va el
+        // texto de la proyeccion: lo que le faltaba era decir QUE dibuja.
+        const evolutionHelp = evolutionMode === 'networth'
+          ? 'Cuentas y huchas al cierre de cada mes, con los movimientos que tengas registrados.'
+          : evolutionMode === 'flow'
+            ? 'Mismas definiciones que arriba: los ingresos incluyen lo retirado de huchas, los gastos van netos de reembolsos y el ahorro es lo que mueves a huchas.'
+            : 'Gasto neto de cada categoría, ya descontados los reembolsos cobrados.';
         return (
           <div key={key} className="relative bg-white dark:bg-slate-900 p-8 md:p-10 rounded-[2.5rem] border border-slate-100 dark:border-slate-800 shadow-sm transition-all duration-300">
             {moveControls}
@@ -647,6 +727,7 @@ const Dashboard: React.FC = () => {
                 )}
               </div>
             </div>
+            <p className="text-[10px] text-slate-400 dark:text-slate-500 leading-relaxed -mt-3 mb-5">{evolutionHelp}</p>
 
             {evolutionMode === 'flow' && (
               <div className="flex flex-wrap gap-2 mb-6">
@@ -846,6 +927,159 @@ const Dashboard: React.FC = () => {
           </div>
         );
       }
+      case 'reminders': {
+        // Solo avisa. No entra en ningun total del dashboard, ni en los
+        // presupuestos, ni en la proyeccion: la unica cifra que sale aqui es la
+        // suya, y siempre dicha como prevision.
+        const pendientes = reminderOccurrences.filter(o => o.state === 'pending');
+        const resueltos = reminderOccurrences.filter(o => o.state !== 'pending');
+
+        return (
+          <div key={key} className={cardClass}>
+            {moveControls}
+            <div className="flex items-center justify-between gap-2 mb-4">
+              <div className="flex items-center gap-2 min-w-0">
+                <div className="w-10 h-10 bg-amber-50 dark:bg-amber-900/40 text-amber-600 dark:text-amber-400 rounded-xl flex items-center justify-center shrink-0"><CalendarClock size={20} /></div>
+                <div className="min-w-0">
+                  <h3 className="font-bold text-slate-800 dark:text-slate-100">Próximos gastos</h3>
+                  <p className="text-[10px] text-slate-400 dark:text-slate-500 font-bold uppercase tracking-widest truncate">
+                    {reminderSummary.pending > 0
+                      ? `${euros(reminderSummary.pendingAmount)} previstos`
+                      : reminderSummary.total > 0 ? 'Todo al día' : 'Sin recordatorios'}
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setReminderEditing('nuevo')}
+                className="p-2.5 rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 hover:bg-amber-100 dark:hover:bg-amber-900/40 hover:text-amber-600 transition-colors shrink-0"
+                title="Nuevo recordatorio"
+              >
+                <Plus size={16} />
+              </button>
+            </div>
+
+            {reminderOccurrences.length === 0 ? (
+              <div className="text-center py-8">
+                <p className="text-xs text-slate-400 dark:text-slate-600 leading-relaxed px-4">
+                  Aún no tienes recordatorios. Añade el seguro, el gimnasio o esa cuota que siempre te pilla.
+                </p>
+                <button
+                  onClick={() => setReminderEditing('nuevo')}
+                  className="mt-4 text-[10px] font-black text-amber-600 dark:text-amber-400 uppercase tracking-widest hover:underline"
+                >
+                  Añadir el primero
+                </button>
+              </div>
+            ) : (
+              <div className="space-y-2.5">
+                {pendientes.map(o => {
+                  const candidatas = suggestMatches({
+                    occurrence: o,
+                    transactions: periodTransactions,
+                    usedTxIds: linkedTxIds,
+                  });
+                  const sugerida = candidatas.length ? candidatas[0].tx : null;
+                  return (
+                    <div
+                      key={o.reminder.id + o.month}
+                      className={`p-3.5 rounded-2xl border transition-colors ${
+                        o.overdue
+                          ? 'bg-amber-50 dark:bg-amber-900/20 border-amber-200 dark:border-amber-800'
+                          : 'bg-slate-50 dark:bg-slate-800/50 border-slate-100 dark:border-slate-800'
+                      }`}
+                    >
+                      <div className="flex items-center gap-3">
+                        <span className="text-lg shrink-0">{o.reminder.emoji || '🔔'}</span>
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-black text-slate-800 dark:text-slate-100 truncate">{o.reminder.name}</p>
+                          <p className="text-[10px] text-slate-400 dark:text-slate-500">
+                            {o.dueDay ? 'día ' + o.dueDay : 'este mes'}
+                            {o.overdue && ' · ya debería haber pasado'}
+                            {!isMonthKey(currentDate) && ' · ' + o.month}
+                          </p>
+                        </div>
+                        <span className="text-sm font-black text-slate-700 dark:text-slate-200 shrink-0">
+                          {o.amount > 0 ? euros(o.amount) : '—'}
+                        </span>
+                      </div>
+
+                      {sugerida ? (
+                        <div className="mt-3 pt-3 border-t border-slate-200/70 dark:border-slate-700/70">
+                          {/* Propone; no decide. Hasta que no lo confirmas, el aviso sigue vivo. */}
+                          <p className="text-[10px] text-slate-500 dark:text-slate-400 leading-relaxed mb-2">
+                            ¿Este cargo de <strong>{euros(sugerida.amount)}</strong> del {sugerida.date.slice(8, 10)}/{sugerida.date.slice(5, 7)} es {o.reminder.name}?
+                          </p>
+                          <div className="flex gap-2">
+                            <button
+                              onClick={() => markReminderDone(o.reminder.id, o.month, { txId: sugerida.id, amount: sugerida.amount, at: today })}
+                              className="flex-1 py-2 rounded-xl bg-emerald-600 text-white text-[10px] font-black uppercase tracking-widest"
+                            >
+                              Sí, es este
+                            </button>
+                            <button
+                              onClick={() => rejectReminderMatch(o.reminder.id, o.month, sugerida.id)}
+                              className="flex-1 py-2 rounded-xl bg-white dark:bg-slate-800 text-slate-500 dark:text-slate-400 border border-slate-200 dark:border-slate-700 text-[10px] font-black uppercase tracking-widest"
+                            >
+                              No es este
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="mt-2 flex items-center gap-2">
+                          <button
+                            onClick={() => markReminderDone(o.reminder.id, o.month, { at: today })}
+                            className="text-[10px] font-bold text-emerald-700 dark:text-emerald-400 hover:underline"
+                          >
+                            Ya está
+                          </button>
+                          <span className="text-[10px] text-slate-300 dark:text-slate-700">·</span>
+                          <button
+                            onClick={() => skipReminderMonth(o.reminder.id, o.month, true)}
+                            className="text-[10px] font-bold text-slate-400 dark:text-slate-500 hover:underline"
+                          >
+                            Este mes no toca
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+
+                {resueltos.map(o => (
+                  <div key={o.reminder.id + o.month} className="flex items-center gap-3 px-3.5 py-2.5 rounded-2xl opacity-60">
+                    <span className="text-sm shrink-0">{o.reminder.emoji || '🔔'}</span>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-xs font-bold text-slate-500 dark:text-slate-400 line-through truncate">{o.reminder.name}</p>
+                      {o.danglingLink && (
+                        <p className="text-[10px] text-amber-600 dark:text-amber-400 no-underline">El movimiento enlazado ya no existe</p>
+                      )}
+                    </div>
+                    <span className="text-[11px] font-bold text-slate-400 dark:text-slate-500 shrink-0">
+                      {o.state === 'skipped'
+                        ? 'no tocaba'
+                        : o.fulfilment && o.fulfilment.amount !== undefined ? euros(o.fulfilment.amount) : 'hecho'}
+                    </span>
+                    <button
+                      onClick={() => (o.state === 'skipped' ? skipReminderMonth(o.reminder.id, o.month, false) : clearReminderDone(o.reminder.id, o.month))}
+                      className="text-[10px] font-bold text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 shrink-0"
+                      title="Deshacer"
+                    >
+                      deshacer
+                    </button>
+                  </div>
+                ))}
+
+                <button
+                  onClick={() => setReminderEditing(null)}
+                  className="w-full pt-2 text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-widest hover:text-slate-600 dark:hover:text-slate-300 transition-colors"
+                >
+                  Gestionar
+                </button>
+              </div>
+            )}
+          </div>
+        );
+      }
       default: return null;
     }
   };
@@ -873,6 +1107,13 @@ const Dashboard: React.FC = () => {
             <div className="mt-8 pt-6 border-t border-slate-100 dark:border-slate-800 flex-shrink-0"><button onClick={() => setSelectedBudgetForDetails(null)} className="w-full py-4 bg-slate-900 dark:bg-blue-600 text-white font-black rounded-2xl hover:bg-slate-800 dark:hover:bg-blue-700 transition-all active:scale-[0.98]">ENTENDIDO</button></div>
           </div>
         </div>
+      )}
+      {reminderEditing !== undefined && (
+        <ReminderModal
+          month={isMonthKey(currentDate) ? currentDate : currentDate + '-01'}
+          initial={reminderEditing}
+          onClose={() => setReminderEditing(undefined)}
+        />
       )}
     </div>
   );

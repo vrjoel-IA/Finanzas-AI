@@ -50,6 +50,8 @@ export interface MonthReport {
   savingGoals: { total: number; met: number };
   unbudgeted: { category: string; amount: number } | null;
   txCount: number;
+  /** Recordatorios del periodo. null si no se pasaron. */
+  upcoming: { pending: number; amount: number; overdue: number } | null;
   lines: string[];
 }
 
@@ -61,6 +63,11 @@ export interface MonthReportInput {
   budgets: Budget[];
   index: PeriodIndex;
   savings: Saving[];
+  /**
+   * Recordatorios del periodo, YA resumidos. Entran calculados para no acoplar
+   * el informe al modulo de recordatorios: sin ellos, el informe es el de antes.
+   */
+  upcoming?: { pending: number; amount: number; overdue: number };
 }
 
 const MONTHS = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'];
@@ -74,6 +81,24 @@ const MAX_WATCH = 3;
 export function periodLabel(period: PeriodKey): string {
   if (isMonthKey(period)) return MONTHS[Number(period.slice(5, 7)) - 1] + ' ' + period.slice(0, 4);
   return period;
+}
+
+/**
+ * Nombre del periodo con el que se compara, para ponerlo al lado de la cifra.
+ *
+ * El anio solo aparece cuando aporta algo: comparando septiembre de 2026 con
+ * agosto de 2026 basta "Agosto"; contra agosto de 2025 hace falta el anio. La
+ * comparativa decia "Entonces", que no nombra nada y obliga a mirar la cabecera.
+ *
+ * Va en mayuscula, al reves que periodLabel: es una etiqueta suelta y no una
+ * pieza dentro de una frase.
+ */
+export function compareLabel(period: PeriodKey, reference: PeriodKey): string {
+  if (!isMonthKey(period)) return period;
+  const name = MONTHS[Number(period.slice(5, 7)) - 1];
+  const capitalized = name.charAt(0).toUpperCase() + name.slice(1);
+  const sameYear = isMonthKey(reference) && reference.slice(0, 4) === period.slice(0, 4);
+  return sameYear ? capitalized : capitalized + ' ' + period.slice(0, 4);
 }
 
 const isLeap = (year: number) => (year % 4 === 0 && year % 100 !== 0) || year % 400 === 0;
@@ -211,10 +236,32 @@ export function buildMonthReport(input: MonthReportInput): MonthReport {
     savingGoals,
     unbudgeted,
     txCount: agg.txCount,
+    upcoming: input.upcoming || null,
     lines: [],
   };
   report.lines = describe(report);
   return report;
+}
+
+/**
+ * Lo que viene y todavia no ha pasado.
+ *
+ * El parentesis no es decorativo: sin el, la IA que redacta encima de este
+ * informe leeria esa cifra como dinero ya gastado y aconsejaria sobre un mes que
+ * no existe.
+ */
+function upcomingLine(r: MonthReport): string | null {
+  const upcoming = r.upcoming;
+  if (!upcoming || !upcoming.pending) return null;
+  const cuantos = upcoming.pending === 1 ? '1 recordatorio' : upcoming.pending + ' recordatorios';
+  let line = `Además tienes previstos ${euros(upcoming.amount)} en ${cuantos} que aún no has dado por pagados`;
+  line += r.kind === 'future' ? '.' : ' (no están contados en el gasto de arriba).';
+  if (upcoming.overdue > 0) {
+    line += upcoming.overdue === 1
+      ? ' Uno de ellos ya debería haber pasado.'
+      : ` ${upcoming.overdue} de ellos ya deberían haber pasado.`;
+  }
+  return line;
 }
 
 function describe(r: MonthReport): string[] {
@@ -224,6 +271,8 @@ function describe(r: MonthReport): string[] {
     lines.push(`${capitalize(r.label)} todavía no ha empezado.`);
     if (r.expenseBudget) lines.push(`Tienes ${euros(r.expenseBudget.limit)} presupuestados en gastos.`);
     if (r.incomeGoal) lines.push(`Esperas ingresar ${euros(r.incomeGoal.target)}.`);
+    const aviso = upcomingLine(r);
+    if (aviso) lines.push(aviso);
     return lines;
   }
 
@@ -231,6 +280,8 @@ function describe(r: MonthReport): string[] {
     lines.push(r.kind === 'progress'
       ? `Aún no hay movimientos en ${r.label}.`
       : `No hubo movimientos en ${r.label}.`);
+    const aviso = upcomingLine(r);
+    if (aviso) lines.push(aviso);
     return lines;
   }
 
@@ -274,6 +325,10 @@ function describe(r: MonthReport): string[] {
   if (r.kind === 'summary' && r.unbudgeted && lines.length < 5) {
     lines.push(`Tu mayor gasto sin presupuesto fue ${r.unbudgeted.category} (${euros(r.unbudgeted.amount)}).`);
   }
+
+  // Lo que viene va al final: es una prevision, no un hecho del periodo.
+  const aviso = upcomingLine(r);
+  if (aviso) lines.push(aviso);
 
   return lines;
 }
