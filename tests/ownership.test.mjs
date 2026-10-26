@@ -214,3 +214,18 @@ test('la aportacion apuntada junto a mi traspaso cuenta como de la otra persona'
   assert.equal(weights['p'] + weights['m-in'], 1, 'una es mia y la otra suya');
   assert.equal(ownedAccountBalance(couple()[1], transactions, '2026-09-30', weights), 27);
 });
+
+test('el desglose de tu parte separa lo tuyo, lo suyo y los gastos', () => {
+  const { ownedAccountBreakdown } = ownership;
+  const transactions = [
+    ...myContribution(27),
+    partnerContribution(25),
+    tx({ id: 'g', amount: 40, category: 'Alimentacion', type: 'expense', accountId: 'conjunta' }),
+  ];
+  const accounts = couple();
+  const owned = ownedAccountBreakdown(accounts[1], transactions, '2026-09-30', buildTransferWeights(transactions, accounts));
+  assert.equal(owned.mine, 27);
+  assert.equal(owned.partner, 25);
+  assert.equal(owned.shared, -20);
+  assert.equal(owned.total, 7);
+});

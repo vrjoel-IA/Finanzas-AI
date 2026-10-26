@@ -197,15 +197,25 @@ const Accounts: React.FC = () => {
                 <span className="text-3xl font-black text-slate-900 dark:text-white">{displayBalance.toLocaleString('es-ES')}€</span>
                 <span className="text-[10px] text-slate-400 dark:text-slate-500 font-bold uppercase tracking-wider">Saldo en {currentDate}</span>
               </div>
-              {isShared(acc) && (
-                <div className="mt-3 flex items-center gap-2 px-3 py-2 bg-blue-50 dark:bg-blue-900/20 rounded-xl border border-blue-100 dark:border-blue-900/40">
-                  <Users size={14} className="text-blue-600 dark:text-blue-400 shrink-0" />
-                  <span className="text-[11px] font-bold text-blue-700 dark:text-blue-300">
-                    Tu parte: {Math.round(getOwnedAccountBalance(acc.id, currentDate)).toLocaleString('es-ES')}€
-                  </span>
-                  <span className="text-[10px] font-black text-blue-400 dark:text-blue-500 ml-auto">{acc.ownershipPercent}%</span>
-                </div>
-              )}
+              {isShared(acc) && (() => {
+                const owned = getOwnedAccountBalance(acc.id, currentDate);
+                const eur = (n: number) => Math.round(n).toLocaleString('es-ES') + '€';
+                return (
+                  <div className="mt-3 px-3 py-2 bg-blue-50 dark:bg-blue-900/20 rounded-xl border border-blue-100 dark:border-blue-900/40">
+                    <div className="flex items-center gap-2">
+                      <Users size={14} className="text-blue-600 dark:text-blue-400 shrink-0" />
+                      <span className="text-[11px] font-bold text-blue-700 dark:text-blue-300">Tu parte: {eur(owned.total)}</span>
+                      <span className="text-[10px] font-black text-blue-400 dark:text-blue-500 ml-auto">{acc.ownershipPercent}%</span>
+                    </div>
+                    <div className="mt-1.5 grid grid-cols-2 gap-x-3 gap-y-0.5 text-[10px] font-bold text-slate-500 dark:text-slate-400">
+                      <span>Aportado por ti</span><span className="text-right tabular-nums">{eur(owned.mine)}</span>
+                      <span>Aportado por la otra persona</span><span className="text-right tabular-nums">{eur(owned.partner)}</span>
+                      <span>Tu parte de gastos y otros</span><span className="text-right tabular-nums">{eur(owned.shared)}</span>
+                      {Math.round(owned.initial) !== 0 && (<><span>Tu parte del saldo inicial</span><span className="text-right tabular-nums">{eur(owned.initial)}</span></>)}
+                    </div>
+                  </div>
+                );
+              })()}
             </div>
           );
         })}

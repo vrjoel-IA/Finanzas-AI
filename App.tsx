@@ -28,7 +28,8 @@ import type { Snapshot } from './services/versionHistory';
 import type { DestructiveVerdict } from './services/stateGuard';
 import { buildPeriodIndex, aggregatePeriod } from './services/periodIndex';
 import type { PeriodIndex, PeriodAggregate } from './services/periodIndex';
-import { buildIndexWeights, buildTransferWeights, hasSharedEntities, ownedAccountBalance } from './services/ownership';
+import { buildIndexWeights, buildTransferWeights, hasSharedEntities, ownedAccountBreakdown } from './services/ownership';
+import type { OwnedBreakdown } from './services/ownership';
 import { resolveEffectiveBudgets, materializeBudgets, saveBudgetInMonth, removeBudgetFromMonth, budgetKey } from './services/budgetPlan';
 import type { EffectiveBudget } from './services/budgetPlan';
 import { isMonthKey, normalizePeriodForView } from './services/periods';
@@ -134,7 +135,7 @@ interface FinanceContextType extends FinanceState {
   // integro; `viewIndex` cuenta solo tu parte, que es lo que se analiza siempre.
   viewIndex: PeriodIndex;
   hasSharedAccounts: boolean;
-  getOwnedAccountBalance: (accountId: string, dateStr: string) => number;
+  getOwnedAccountBalance: (accountId: string, dateStr: string) => OwnedBreakdown;
   
   // Wealth Projection Methods
   addExtraSaving: (e: Omit<ExtraSaving, 'id'>) => void;
@@ -729,7 +730,7 @@ const App: React.FC = () => {
 
   const getAccountHistoricalBalance = useCallback((accountId: string, dateStr: string) => {
     const account = state.accounts.find(a => a.id === accountId);
-    if (!account) return 0;
+    if (!account) return { initial: 0, mine: 0, partner: 0, shared: 0, total: 0 };
     let cutoffDate = dateStr;
     if (dateStr.length === 4) cutoffDate = `${dateStr}-12-31`;
     else if (dateStr.length === 7) { 
@@ -794,14 +795,14 @@ const App: React.FC = () => {
 
   const getOwnedAccountBalance = useCallback((accountId: string, dateStr: string) => {
     const account = state.accounts.find(a => a.id === accountId);
-    if (!account) return 0;
+    if (!account) return { initial: 0, mine: 0, partner: 0, shared: 0, total: 0 };
     let cutoffDate = dateStr;
     if (dateStr.length === 4) cutoffDate = `${dateStr}-12-31`;
     else if (dateStr.length === 7) {
       const [y, m] = dateStr.split('-').map(Number);
       cutoffDate = `${dateStr}-${new Date(y, m, 0).getDate()}`;
     }
-    return ownedAccountBalance(account, state.transactions, cutoffDate, transferWeights);
+    return ownedAccountBreakdown(account, state.transactions, cutoffDate, transferWeights);
   }, [state.accounts, state.transactions, transferWeights]);
 
   const getPeriodAggregate = useCallback(

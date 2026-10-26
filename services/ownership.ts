@@ -139,18 +139,42 @@ export function ownedAccountBalance(
   cutoffDate: string,
   transferWeights: Record<string, number>,
 ): number {
+  return ownedAccountBreakdown(account, transactions, cutoffDate, transferWeights).total;
+}
+
+/** De donde sale "Tu parte", para poder ensenarlo y comprobarlo. */
+export interface OwnedBreakdown {
+  /** Tu porcentaje del saldo inicial de la cuenta. */
+  initial: number;
+  /** Lo que has metido tu (traspasos desde cuentas tuyas), menos lo que has sacado a ellas. */
+  mine: number;
+  /** Lo que ha metido la otra persona, menos lo que ha sacado. No es tuyo: solo informa. */
+  partner: number;
+  /** Tu porcentaje de todo lo demas: gastos (negativo) y otros ingresos. */
+  shared: number;
+  total: number;
+}
+
+export function ownedAccountBreakdown(
+  account: Account,
+  transactions: Transaction[],
+  cutoffDate: string,
+  transferWeights: Record<string, number>,
+): OwnedBreakdown {
   const share = ownershipWeight(account.ownershipPercent);
-  let balance = Number(account.initialBalance) * share || 0;
+  const result: OwnedBreakdown = { initial: Number(account.initialBalance) * share || 0, mine: 0, partner: 0, shared: 0, total: 0 };
   const list = Array.isArray(transactions) ? transactions : [];
   for (let i = 0; i < list.length; i++) {
     const t = list[i];
     if (!t || t.accountId !== account.id || !(t.date <= cutoffDate)) continue;
+    const signed = (Number(t.amount) || 0) * (t.type === 'income' ? 1 : -1);
     const override = transferWeights[t.id];
-    const w = typeof override === 'number' ? override : share;
-    const amount = Number(t.amount) || 0;
-    balance += (t.type === 'income' ? amount : -amount) * w;
+    if (override === 1) result.mine += signed;
+    else if (override === 0) result.partner += signed;
+    else result.shared += signed * share;
   }
-  return balance;
+  result.total = result.initial + result.mine + result.shared;
+  return result;
 }
 
 /** Pesos por id, listos para buildPeriodIndex. */
