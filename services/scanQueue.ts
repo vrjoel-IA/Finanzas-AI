@@ -39,6 +39,12 @@ export interface ScanDraft {
   transferTargetId: string;
   savingDirection: 'deposit' | 'withdraw';
   /**
+   * Lo que mete la otra persona en la cuenta compartida a la vez que tu
+   * traspaso. '' = nada. Se escribe como un movimiento aparte, sin pareja en
+   * ninguna cuenta tuya, que es como la app reconoce que es suyo.
+   */
+  partnerAmount: number | '';
+  /**
    * Recordatorio que este movimiento cierra, si el usuario lo enlaza. Vive en el
    * borrador para que en Aura Vision la eleccion sobreviva a ir y volver entre
    * pendientes, como todo lo demas.
@@ -165,6 +171,7 @@ export function emptyDraft(ctx: DraftContext): ScanDraft {
     isTransfer: false,
     transferTargetId: '',
     savingDirection: 'deposit',
+    partnerAmount: '',
     reminderId: undefined,
   };
 }
@@ -265,7 +272,20 @@ export type TxPayload = Omit<Transaction, 'id'>;
 
 export type DraftPayload =
   | { kind: 'single'; tx: TxPayload; myPart?: number }
-  | { kind: 'transfer'; out: TxPayload; in: TxPayload };
+  | { kind: 'transfer'; out: TxPayload; in: TxPayload; partner?: TxPayload };
+
+/** La aportacion de la otra persona: un Traspaso que entra en la cuenta compartida sin salir de ninguna tuya. */
+export function partnerContributionTx(accountId: string, amount: number, date: string): TxPayload {
+  return {
+    date,
+    amount,
+    description: 'Aportación de la otra persona',
+    category: 'Traspaso',
+    type: 'income',
+    accountId,
+    isRefund: false,
+  };
+}
 
 /**
  * Lo que se va a escribir, exactamente igual que antes de existir este modulo.
@@ -299,6 +319,9 @@ export function payloadFromDraft(draft: ScanDraft, accountName: (id: string) => 
         accountId: draft.transferTargetId,
         isRefund: false,
       },
+      partner: Number(draft.partnerAmount) > 0
+        ? partnerContributionTx(draft.transferTargetId, Number(draft.partnerAmount), draft.date)
+        : undefined,
     };
   }
 

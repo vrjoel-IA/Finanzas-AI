@@ -203,3 +203,14 @@ test('sin cuentas compartidas no hay pesos por movimiento y nada se muta', () =>
   buildTransferWeights(transactions, couple());
   assert.equal(JSON.stringify(transactions), before);
 });
+
+test('la aportacion apuntada junto a mi traspaso cuenta como de la otra persona', () => {
+  // Mismo dia e importe que la mia: no debe robarle la pareja a mi salida.
+  const transactions = [
+    partnerContribution(27, '2026-09-01', 'p'),
+    ...myContribution(27),
+  ];
+  const weights = buildTransferWeights(transactions, couple());
+  assert.equal(weights['p'] + weights['m-in'], 1, 'una es mia y la otra suya');
+  assert.equal(ownedAccountBalance(couple()[1], transactions, '2026-09-30', weights), 27);
+});

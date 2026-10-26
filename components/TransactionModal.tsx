@@ -29,6 +29,8 @@ import {
 } from '../services/scanQueue';
 import type { ScanDraft, ScanSlot } from '../services/scanQueue';
 import { suggestRemindersForDraft } from '../services/expenseReminders';
+import { isShared } from '../services/ownership';
+import PartnerContributionField from './PartnerContributionField';
 
 // Formulario de movimiento: alta manual, edicion y confirmacion de lo que
 // extrae Aura Vision. Vive aparte para poder abrirse sobre cualquier pantalla
@@ -218,6 +220,7 @@ const TransactionModal: React.FC<TransactionModalProps> = ({ editingTx: initialT
       if (!isInScanBatch.current) startUndoBatch();
       addTransaction(payload.out);
       addTransaction(payload.in);
+      if (payload.partner) addTransaction(payload.partner);
       if (!isInScanBatch.current) {
         commitUndoBatch(`Traspaso: ${Number(draft.amount).toLocaleString('es-ES', { minimumFractionDigits: 2 })}€`);
       }
@@ -439,6 +442,14 @@ const TransactionModal: React.FC<TransactionModalProps> = ({ editingTx: initialT
                     </div>
                   </div>
                 </div>
+
+                {draft.isTransfer && isShared(accounts.find(a => a.id === draft.transferTargetId)) && (
+                  <PartnerContributionField
+                    value={draft.partnerAmount}
+                    myAmount={draft.amount}
+                    onChange={v => patch({ partnerAmount: v })}
+                  />
+                )}
 
                 {!draft.isTransfer && draft.type !== 'saving' && (
                   <div className="pt-4">

@@ -270,3 +270,16 @@ test('aguanta entradas corruptas sin lanzar', () => {
   assert.equal(draft.date, HOY);
   assert.equal(countByStatus([]).pending, 0);
 });
+
+test('un traspaso a la cuenta compartida puede llevar la aportacion de la otra persona', () => {
+  const base = { ...emptyDraft(ctx()), amount: 27, date: '2026-09-14', isTransfer: true, accountId: 'a1', transferTargetId: 'a2' };
+  assert.equal(payloadFromDraft(base, nombreCuenta).partner, undefined, 'vacio = no aporta nada');
+
+  const payload = payloadFromDraft({ ...base, partnerAmount: 25 }, nombreCuenta);
+  assert.equal(payload.partner.amount, 25);
+  assert.equal(payload.partner.accountId, 'a2');
+  assert.equal(payload.partner.type, 'income');
+  assert.equal(payload.partner.category, 'Traspaso');
+  assert.equal(payload.partner.date, '2026-09-14');
+  assert.equal(payload.in.amount, 27, 'mi parte no cambia');
+});

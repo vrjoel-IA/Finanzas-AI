@@ -4,6 +4,8 @@ import { useFinance } from '../App';
 import { Plus, Trash2, Edit2, ArrowRightLeft, CreditCard, Banknote, Landmark, X, Check, Users } from 'lucide-react';
 import { Account } from '../types';
 import { isShared } from '../services/ownership';
+import { partnerContributionTx } from '../services/scanQueue';
+import PartnerContributionField from './PartnerContributionField';
 
 const Accounts: React.FC = () => {
   const { accounts, currentDate, getAccountHistoricalBalance, getOwnedAccountBalance, addAccount, updateAccount, deleteAccount, addTransaction, theme } = useFinance();
@@ -25,6 +27,7 @@ const Accounts: React.FC = () => {
   const [fromId, setFromId] = useState('');
   const [toId, setToId] = useState('');
   const [transferAmount, setTransferAmount] = useState<number | ''>('');
+  const [partnerAmount, setPartnerAmount] = useState<number | ''>('');
 
   const resetForm = () => {
     setName('');
@@ -106,9 +109,13 @@ const Accounts: React.FC = () => {
       accountId: toId,
       isRefund: false
     });
+    if (isShared(accounts.find(a => a.id === toId)) && Number(partnerAmount) > 0) {
+      addTransaction(partnerContributionTx(toId, Number(partnerAmount), date));
+    }
 
     setIsTransferring(false);
     setTransferAmount('');
+    setPartnerAmount('');
     setFromId('');
     setToId('');
   };
@@ -388,6 +395,9 @@ const Accounts: React.FC = () => {
                   required 
                 />
               </div>
+              {isShared(accounts.find(a => a.id === toId)) && (
+                <PartnerContributionField value={partnerAmount} myAmount={transferAmount} onChange={setPartnerAmount} />
+              )}
               <div className="flex gap-3 pt-4">
                 <button 
                   type="button" 
