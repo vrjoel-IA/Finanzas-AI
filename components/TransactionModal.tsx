@@ -269,7 +269,7 @@ const TransactionModal: React.FC<TransactionModalProps> = ({ editingTx: initialT
 
   return (
      <div className="fixed inset-0 bg-slate-900/90 z-50 flex items-center justify-center p-3 sm:p-4">
-         <div className="bg-white dark:bg-slate-900 rounded-[2rem] w-full max-w-lg p-5 sm:p-7 shadow-2xl animate-in zoom-in duration-300 border border-slate-200 dark:border-slate-800 overflow-y-auto max-h-[94dvh] custom-scrollbar">
+         <div className="bg-white dark:bg-slate-900 rounded-[2rem] w-full max-w-lg p-5 sm:p-7 shadow-2xl animate-in zoom-in duration-300 border border-slate-200 dark:border-slate-800 overflow-y-auto overflow-x-hidden max-h-[94dvh] custom-scrollbar">
             <div className="flex justify-between items-center mb-3">
               <div className="flex flex-col">
                 <h3 className="text-xl sm:text-2xl font-black text-slate-900 dark:text-white tracking-tight">
@@ -373,10 +373,10 @@ const TransactionModal: React.FC<TransactionModalProps> = ({ editingTx: initialT
               <div className="space-y-3">
                 <div>
                   <label className="block text-[10px] font-black text-slate-700 dark:text-slate-400 uppercase tracking-widest mb-1.5">Descripción</label>
-                  <input type="text" value={draft.desc} onChange={e => patch({ desc: e.target.value })} className="w-full bg-slate-50 dark:bg-slate-800 border-2 border-slate-100 dark:border-slate-700 rounded-xl px-3 py-2.5 font-bold outline-none focus:border-blue-400 dark:focus:border-blue-600 transition-all placeholder:text-slate-300 dark:placeholder:text-slate-600 text-slate-900 dark:text-white" placeholder="Ej: Supermercado..." required />
+                  <input type="text" value={draft.desc} onChange={e => patch({ desc: e.target.value })} className="w-full bg-slate-50 dark:bg-slate-800 border-2 border-slate-100 dark:border-slate-700 rounded-xl px-3 h-12 w-full min-w-0 appearance-none text-sm sm:text-base font-bold outline-none focus:border-blue-400 dark:focus:border-blue-600 transition-all placeholder:text-slate-300 dark:placeholder:text-slate-600 text-slate-900 dark:text-white" placeholder="Ej: Supermercado..." required />
                 </div>
 
-                <div className="grid grid-cols-2 gap-3">
+                <div className="grid grid-cols-2 gap-3 [&>*]:min-w-0">
                   <div className="relative">
                     <label className="block text-[10px] font-black text-slate-700 dark:text-slate-400 uppercase tracking-widest mb-1.5">Importe (€)</label>
                     <input
@@ -385,7 +385,7 @@ const TransactionModal: React.FC<TransactionModalProps> = ({ editingTx: initialT
                       value={draft.amount}
                       onChange={e => patch({ amount: e.target.value === '' ? '' : Number(e.target.value) })}
                       disabled={amountLocked}
-                      className={`w-full bg-slate-50 dark:bg-slate-800 border-2 border-slate-100 dark:border-slate-700 rounded-xl px-3 py-2.5 font-black text-lg outline-none text-slate-900 dark:text-white ${amountLocked ? 'opacity-60 grayscale cursor-not-allowed' : ''}`}
+                      className={`w-full bg-slate-50 dark:bg-slate-800 border-2 border-slate-100 dark:border-slate-700 rounded-xl px-3 h-12 w-full min-w-0 appearance-none text-sm sm:text-base font-black outline-none text-slate-900 dark:text-white ${amountLocked ? 'opacity-60 grayscale cursor-not-allowed' : ''}`}
                       required
                     />
                     {amountLocked && (
@@ -396,17 +396,17 @@ const TransactionModal: React.FC<TransactionModalProps> = ({ editingTx: initialT
                   </div>
                   <div>
                     <label className="block text-[10px] font-black text-slate-700 dark:text-slate-400 uppercase tracking-widest mb-1.5">Fecha</label>
-                    <input type="date" value={draft.date} onChange={e => patch({ date: e.target.value })} className="w-full bg-slate-50 dark:bg-slate-800 border-2 border-slate-100 dark:border-slate-700 rounded-xl px-3 py-2.5 font-bold outline-none text-slate-900 dark:text-white" required />
+                    <input type="date" value={draft.date} onChange={e => patch({ date: e.target.value })} className="[&::-webkit-date-and-time-value]:text-left [&::-webkit-calendar-picker-indicator]:ml-auto w-full bg-slate-50 dark:bg-slate-800 border-2 border-slate-100 dark:border-slate-700 rounded-xl px-3 h-12 w-full min-w-0 appearance-none text-sm sm:text-base font-bold outline-none text-slate-900 dark:text-white" required />
                   </div>
                 </div>
 
-                <div className="grid grid-cols-2 gap-3">
+                <div className="grid grid-cols-2 gap-3 [&>*]:min-w-0">
                   <div>
                     <label className="block text-[10px] font-black text-slate-700 dark:text-slate-400 uppercase tracking-widest mb-1.5">
                       {draft.isTransfer ? 'Cuenta Origen' : draft.savingDirection === 'withdraw' ? 'Cuenta Destino' : 'Desde Cuenta'}
                     </label>
                     <div className="relative">
-                      <select value={draft.accountId} onChange={e => patch({ accountId: e.target.value })} className="w-full bg-slate-50 dark:bg-slate-800 border-2 border-slate-100 dark:border-slate-700 rounded-xl px-3 py-2.5 font-bold outline-none appearance-none text-slate-900 dark:text-white">
+                      <select value={draft.accountId} onChange={e => patch({ accountId: e.target.value })} className="w-full bg-slate-50 dark:bg-slate-800 border-2 border-slate-100 dark:border-slate-700 rounded-xl px-3 h-12 w-full min-w-0 appearance-none text-sm sm:text-base font-bold outline-none appearance-none text-slate-900 dark:text-white">
                         {accounts.map(acc => <option key={acc.id} value={acc.id}>{acc.name}</option>)}
                       </select>
                       <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" size={16} />
@@ -418,12 +418,12 @@ const TransactionModal: React.FC<TransactionModalProps> = ({ editingTx: initialT
                     </label>
                     <div className="relative">
                       {draft.isTransfer ? (
-                        <select value={draft.transferTargetId} onChange={e => patch({ transferTargetId: e.target.value })} className="w-full bg-slate-50 dark:bg-slate-800 border-2 border-slate-100 dark:border-slate-700 rounded-xl px-3 py-2.5 font-bold outline-none appearance-none text-slate-900 dark:text-white" required>
+                        <select value={draft.transferTargetId} onChange={e => patch({ transferTargetId: e.target.value })} className="w-full bg-slate-50 dark:bg-slate-800 border-2 border-slate-100 dark:border-slate-700 rounded-xl px-3 h-12 w-full min-w-0 appearance-none text-sm sm:text-base font-bold outline-none appearance-none text-slate-900 dark:text-white" required>
                           <option value="">Selecciona destino</option>
                           {accounts.filter(a => a.id !== draft.accountId).map(acc => <option key={acc.id} value={acc.id}>{acc.name}</option>)}
                         </select>
                       ) : draft.type === 'saving' ? (
-                        <select value={draft.selectedSavingId} onChange={e => patch({ selectedSavingId: e.target.value })} className="w-full bg-slate-50 dark:bg-slate-800 border-2 border-slate-100 dark:border-slate-700 rounded-xl px-3 py-2.5 font-bold outline-none appearance-none text-slate-900 dark:text-white" required>
+                        <select value={draft.selectedSavingId} onChange={e => patch({ selectedSavingId: e.target.value })} className="w-full bg-slate-50 dark:bg-slate-800 border-2 border-slate-100 dark:border-slate-700 rounded-xl px-3 h-12 w-full min-w-0 appearance-none text-sm sm:text-base font-bold outline-none appearance-none text-slate-900 dark:text-white" required>
                           <option value="">Selecciona hucha</option>
                           {savings.map(s => <option key={s.id} value={s.id}>{s.emoji} {s.name}</option>)}
                         </select>
@@ -432,7 +432,7 @@ const TransactionModal: React.FC<TransactionModalProps> = ({ editingTx: initialT
                           value={draft.category}
                           onChange={e => patch({ category: e.target.value })}
                           disabled={isCategoryDisabled}
-                          className={`w-full bg-slate-50 dark:bg-slate-800 border-2 border-slate-100 dark:border-slate-700 rounded-xl px-3 py-2.5 font-bold outline-none appearance-none text-slate-900 dark:text-white ${isCategoryDisabled ? 'opacity-60 cursor-not-allowed bg-slate-100 dark:bg-slate-900' : ''}`}
+                          className={`w-full bg-slate-50 dark:bg-slate-800 border-2 border-slate-100 dark:border-slate-700 rounded-xl px-3 h-12 w-full min-w-0 appearance-none text-sm sm:text-base font-bold outline-none appearance-none text-slate-900 dark:text-white ${isCategoryDisabled ? 'opacity-60 cursor-not-allowed bg-slate-100 dark:bg-slate-900' : ''}`}
                           required
                         >
                           {categoryOptions.map(c => <option key={c} value={c}>{c}</option>)}
@@ -456,7 +456,7 @@ const TransactionModal: React.FC<TransactionModalProps> = ({ editingTx: initialT
                      <button
                        type="button"
                        onClick={() => patch({ isRefundLink: !draft.isRefundLink, category: draft.type === 'income' ? '' : draft.category })}
-                       className={`w-full flex items-center justify-between px-3 py-2.5 rounded-xl border-2 transition-all ${draft.isRefundLink ? 'bg-blue-50 dark:bg-blue-900/20 border-blue-400 dark:border-blue-600 text-blue-700 dark:text-blue-400' : 'bg-slate-50 dark:bg-slate-800 border-slate-100 dark:border-slate-700 text-slate-400 dark:text-slate-600'}`}
+                       className={`w-full flex items-center justify-between px-3 h-12 rounded-xl border-2 transition-all ${draft.isRefundLink ? 'bg-blue-50 dark:bg-blue-900/20 border-blue-400 dark:border-blue-600 text-blue-700 dark:text-blue-400' : 'bg-slate-50 dark:bg-slate-800 border-slate-100 dark:border-slate-700 text-slate-400 dark:text-slate-600'}`}
                      >
                        <div className="flex items-center gap-3">
                          <UserCheck size={18} />

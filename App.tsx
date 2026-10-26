@@ -7,7 +7,7 @@ import {
   CalendarRange, Sun, Moon, LineChart as LineChartIcon, 
   LogOut, Loader2, Sparkles, CloudCheck, CloudUpload, RefreshCw,
   ChevronLeft, ChevronRight, AlertTriangle, CloudOff,
-  RefreshCcw, Download, Upload, ShieldCheck, History
+  RefreshCcw, Download, Upload, ShieldCheck, History, Users
 } from 'lucide-react';
 import { FinanceState, Account, Saving, Refund, Transaction, Budget, AIChallenge, ExtraSaving, ChatMessage, AuraReport, ExpenseReminder, ReminderFulfilment } from './types';
 import { INITIAL_DATA } from './constants';
@@ -1605,22 +1605,29 @@ const Header = ({ onMenuClick }: { onMenuClick: () => void }) => {
     return parts.length === 2 ? `${monthNames[parts[1] - 1] || ''} ${parts[0]}` : currentDate;
   }, [currentDate, viewMode]);
   return (
-    <header className="bg-white/80 dark:bg-slate-900/80 backdrop-blur-md border-b border-slate-200 dark:border-slate-800 h-16 flex items-center justify-between px-4 md:px-6 sticky top-0 z-40 transition-all duration-300">
-      <div className="flex items-center gap-3"><button onClick={onMenuClick} className="md:hidden p-2 text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg"><Menu size={22} /></button>
-        <div className="flex items-center gap-2"><div className="flex items-center gap-1 bg-slate-100 dark:bg-slate-800 p-1 rounded-xl shadow-inner mr-2"><button onClick={() => setViewMode('month')} className={`p-1.5 rounded-lg transition-all ${viewMode === 'month' ? 'bg-white dark:bg-slate-700 shadow-sm text-blue-600 dark:text-blue-400' : 'text-slate-400'}`}><CalendarDays size={18} /></button><button onClick={() => setViewMode('year')} className={`p-1.5 rounded-lg transition-all ${viewMode === 'year' ? 'bg-white dark:bg-slate-700 shadow-sm text-blue-600 dark:text-blue-400' : 'text-slate-400'}`}><CalendarRange size={18} /></button></div>
-          <div className="flex items-center gap-1 bg-slate-100 dark:bg-slate-800 p-1 rounded-xl shadow-inner relative"><button onClick={() => changePeriod(-1)} className="p-1 hover:bg-white dark:hover:bg-slate-700 rounded-lg transition-all dark:text-slate-400"><ChevronLeft size={18} /></button><button onClick={() => setIsPeriodDropdownOpen(!isPeriodDropdownOpen)} className="px-3 py-1.5 text-xs font-black text-slate-700 dark:text-slate-300 min-w-[110px] text-center uppercase tracking-wider cursor-pointer hover:bg-white/50 dark:hover:bg-slate-700/50 rounded-lg">{currentFormatted}</button><button onClick={() => changePeriod(1)} className="p-1 hover:bg-white dark:hover:bg-slate-700 rounded-lg transition-all dark:text-slate-400"><ChevronRight size={18} /></button>
+    <header className="bg-white/80 dark:bg-slate-900/80 backdrop-blur-md border-b border-slate-200 dark:border-slate-800 h-16 flex items-center justify-between gap-2 px-3 sm:px-4 md:px-6 sticky top-0 z-40 transition-all duration-300">
+      <div className="flex items-center gap-1 sm:gap-3 min-w-0"><button onClick={onMenuClick} className="md:hidden p-1.5 sm:p-2 text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg"><Menu size={22} /></button>
+        <div className="flex items-center gap-1.5 sm:gap-2"><div className="flex items-center gap-1 bg-slate-100 dark:bg-slate-800 p-1 rounded-xl shadow-inner sm:mr-2"><button onClick={() => setViewMode('month')} className={`p-1.5 rounded-lg transition-all ${viewMode === 'month' ? 'bg-white dark:bg-slate-700 shadow-sm text-blue-600 dark:text-blue-400' : 'text-slate-400'}`}><CalendarDays size={18} /></button><button onClick={() => setViewMode('year')} className={`p-1.5 rounded-lg transition-all ${viewMode === 'year' ? 'bg-white dark:bg-slate-700 shadow-sm text-blue-600 dark:text-blue-400' : 'text-slate-400'}`}><CalendarRange size={18} /></button></div>
+          <div className="flex items-center gap-1 bg-slate-100 dark:bg-slate-800 p-1 rounded-xl shadow-inner relative"><button onClick={() => changePeriod(-1)} className="p-1 hover:bg-white dark:hover:bg-slate-700 rounded-lg transition-all dark:text-slate-400"><ChevronLeft size={18} /></button><button onClick={() => setIsPeriodDropdownOpen(!isPeriodDropdownOpen)} className="px-1.5 sm:px-3 py-1.5 text-[11px] sm:text-xs font-black text-slate-700 dark:text-slate-300 min-w-[78px] sm:min-w-[110px] text-center uppercase tracking-wider cursor-pointer hover:bg-white/50 dark:hover:bg-slate-700/50 rounded-lg">{currentFormatted}</button><button onClick={() => changePeriod(1)} className="p-1 hover:bg-white dark:hover:bg-slate-700 rounded-lg transition-all dark:text-slate-400"><ChevronRight size={18} /></button>
             {isPeriodDropdownOpen && <PeriodDropdown currentDate={currentDate} viewMode={viewMode} setPeriod={(date) => { setPeriod(date); setIsPeriodDropdownOpen(false); }} onClose={() => setIsPeriodDropdownOpen(false)} />}
           </div>
         </div>
       </div>
-      <div className="flex items-center gap-2">
+      <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
         {hasSharedAccounts && (
-          <div className="flex items-center gap-1 bg-slate-100 dark:bg-slate-800 p-1 rounded-xl shadow-inner" title="En las cuentas compartidas, elige si ver el importe completo de la cuenta o solo la parte que te corresponde.">
-            <button onClick={() => setAmountView('mine')} className={`px-2.5 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-wider transition-all ${amountView === 'mine' ? 'bg-white dark:bg-slate-700 shadow-sm text-blue-600 dark:text-blue-400' : 'text-slate-400 dark:text-slate-500'}`}>Mi parte</button>
-            <button onClick={() => setAmountView('full')} className={`px-2.5 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-wider transition-all ${amountView === 'full' ? 'bg-white dark:bg-slate-700 shadow-sm text-blue-600 dark:text-blue-400' : 'text-slate-400 dark:text-slate-500'}`}>Completo</button>
-          </div>
+          <button
+            onClick={() => setAmountView(amountView === 'mine' ? 'full' : 'mine')}
+            title={amountView === 'mine'
+              ? 'Viendo tu parte de las cuentas compartidas. Pulsa para ver los importes completos.'
+              : 'Viendo los importes completos de las cuentas compartidas. Pulsa para ver solo tu parte.'}
+            aria-label={amountView === 'mine' ? 'Ver importes completos' : 'Ver solo mi parte'}
+            className={`h-10 min-w-10 px-2.5 flex items-center justify-center gap-1.5 rounded-xl shadow-sm transition-all text-[10px] font-black uppercase tracking-wider ${amountView === 'mine' ? 'bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400' : 'bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400'}`}
+          >
+            <Users size={16} />
+            <span className="hidden sm:inline">{amountView === 'mine' ? 'Mi parte' : 'Completo'}</span>
+          </button>
         )}
-        <button onClick={toggleTheme} className="p-2.5 rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 shadow-sm transition-all">{theme === 'light' ? <Moon size={20} /> : <Sun size={20} />}</button>
+        <button onClick={toggleTheme} className="h-10 w-10 flex items-center justify-center rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 shadow-sm transition-all">{theme === 'light' ? <Moon size={20} /> : <Sun size={20} />}</button>
       </div>
     </header>
   );
