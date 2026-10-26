@@ -268,15 +268,15 @@ const TransactionModal: React.FC<TransactionModalProps> = ({ editingTx: initialT
   const euros = (value: number | '') => (value === '' ? '—' : Number(value).toLocaleString('es-ES') + '€');
 
   return (
-     <div className="fixed inset-0 bg-slate-900/90 z-50 flex items-center justify-center p-4">
-         <div className="bg-white dark:bg-slate-900 rounded-[3rem] w-full max-w-lg p-10 shadow-2xl animate-in zoom-in duration-300 border border-slate-200 dark:border-slate-800 overflow-y-auto max-h-[90vh] custom-scrollbar">
-            <div className="flex justify-between items-center mb-6">
+     <div className="fixed inset-0 bg-slate-900/90 z-50 flex items-center justify-center p-3 sm:p-4">
+         <div className="bg-white dark:bg-slate-900 rounded-[2rem] w-full max-w-lg p-5 sm:p-7 shadow-2xl animate-in zoom-in duration-300 border border-slate-200 dark:border-slate-800 overflow-y-auto max-h-[94dvh] custom-scrollbar">
+            <div className="flex justify-between items-center mb-3">
               <div className="flex flex-col">
-                <h3 className="text-3xl font-black text-slate-900 dark:text-white tracking-tight">
+                <h3 className="text-xl sm:text-2xl font-black text-slate-900 dark:text-white tracking-tight">
                   {editingTx ? 'Editar Movimiento' : isScanSession ? 'Aura Vision: Confirmación' : 'Nuevo Movimiento'}
                 </h3>
                 {isScanSession && (
-                  <div className="flex items-center gap-2 mt-2 flex-wrap">
+                  <div className="flex items-center gap-2 mt-1 flex-wrap">
                     <Sparkles size={14} className="text-blue-500 animate-pulse" />
                     <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest">
                       {cursorIndex + 1} de {counts.total} analizados
@@ -289,19 +289,19 @@ const TransactionModal: React.FC<TransactionModalProps> = ({ editingTx: initialT
                   </div>
                 )}
               </div>
-              <button onClick={requestClose} className="p-4 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-full text-slate-400"><X size={28} /></button>
+              <button onClick={requestClose} className="p-2 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-full text-slate-400"><X size={22} /></button>
             </div>
 
             {/* Tira de pendientes. Se puede ir y volver entre las que quedan: es lo
                 que permite crear primero el cargo total, generar la deuda y volver
                 despues a los Bizums anteriores para enlazarlos. */}
             {canNavigate && (
-              <div className="flex items-center gap-2 mb-8">
+              <div className="flex items-center gap-2 mb-3">
                 <button
                   type="button"
                   onClick={() => { const id = prevPendingId(slots, cursor); if (id) goTo(id); }}
                   aria-label="Movimiento anterior"
-                  className="w-11 h-11 shrink-0 flex items-center justify-center rounded-2xl bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors"
+                  className="w-9 h-9 shrink-0 flex items-center justify-center rounded-2xl bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors"
                 >
                   <ChevronLeft size={20} />
                 </button>
@@ -315,7 +315,7 @@ const TransactionModal: React.FC<TransactionModalProps> = ({ editingTx: initialT
                         type="button"
                         onClick={() => goTo(slot.id)}
                         aria-current={active ? 'true' : undefined}
-                        className={`shrink-0 snap-start px-3 py-1.5 rounded-xl border-2 transition-all text-left ${
+                        className={`shrink-0 snap-start px-2.5 py-1 rounded-xl border-2 transition-all text-left ${
                           active
                             ? 'bg-blue-600 border-blue-600 text-white shadow-md'
                             : 'bg-slate-50 dark:bg-slate-800 border-slate-100 dark:border-slate-700 text-slate-500 dark:text-slate-400 hover:border-blue-300'
@@ -331,37 +331,37 @@ const TransactionModal: React.FC<TransactionModalProps> = ({ editingTx: initialT
                   type="button"
                   onClick={() => { const id = nextPendingId(slots, cursor); if (id) goTo(id); }}
                   aria-label="Movimiento siguiente"
-                  className="w-11 h-11 shrink-0 flex items-center justify-center rounded-2xl bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors"
+                  className="w-9 h-9 shrink-0 flex items-center justify-center rounded-2xl bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors"
                 >
                   <ChevronRight size={20} />
                 </button>
               </div>
             )}
 
-            <form onSubmit={handleSubmit} className="space-y-8">
-              <div className="flex bg-slate-100 dark:bg-slate-800 p-2 rounded-[1.8rem] border border-slate-200 dark:border-slate-700 shadow-inner">
-                <button type="button" onClick={() => patch({ type: 'expense', isTransfer: false, category: '' })} className={`flex-1 py-4 text-[12px] font-black rounded-2xl transition-all ${draft.type === 'expense' && !draft.isTransfer ? 'bg-white dark:bg-slate-700 shadow-md text-rose-600 dark:text-rose-400' : 'text-slate-500 dark:text-slate-500'}`}>GASTO</button>
-                <button type="button" onClick={() => patch({ type: 'income', isTransfer: false, category: '' })} className={`flex-1 py-4 text-[12px] font-black rounded-2xl transition-all ${draft.type === 'income' && !draft.isTransfer ? 'bg-white dark:bg-slate-700 shadow-md text-emerald-600 dark:text-emerald-400' : 'text-slate-500 dark:text-slate-500'}`}>INGRESO</button>
-                <button type="button" onClick={() => patch({ type: 'saving', isTransfer: false, category: '' })} className={`flex-1 py-4 text-[12px] font-black rounded-2xl transition-all ${draft.type === 'saving' ? 'bg-white dark:bg-slate-700 shadow-md text-amber-500 dark:text-amber-400' : 'text-slate-500 dark:text-slate-500'}`}>AHORRO</button>
-                <button type="button" onClick={() => patch({ isTransfer: true, type: 'expense', category: '' })} className={`flex-1 py-4 text-[12px] font-black rounded-2xl transition-all ${draft.isTransfer ? 'bg-white dark:bg-slate-700 shadow-md text-blue-600 dark:text-blue-400' : 'text-slate-500 dark:text-slate-500'}`}>TRASPASO</button>
+            <form onSubmit={handleSubmit} className="space-y-3">
+              <div className="flex bg-slate-100 dark:bg-slate-800 p-1 rounded-2xl border border-slate-200 dark:border-slate-700 shadow-inner">
+                <button type="button" onClick={() => patch({ type: 'expense', isTransfer: false, category: '' })} className={`flex-1 py-2.5 text-[11px] font-black rounded-xl transition-all ${draft.type === 'expense' && !draft.isTransfer ? 'bg-white dark:bg-slate-700 shadow-md text-rose-600 dark:text-rose-400' : 'text-slate-500 dark:text-slate-500'}`}>GASTO</button>
+                <button type="button" onClick={() => patch({ type: 'income', isTransfer: false, category: '' })} className={`flex-1 py-2.5 text-[11px] font-black rounded-xl transition-all ${draft.type === 'income' && !draft.isTransfer ? 'bg-white dark:bg-slate-700 shadow-md text-emerald-600 dark:text-emerald-400' : 'text-slate-500 dark:text-slate-500'}`}>INGRESO</button>
+                <button type="button" onClick={() => patch({ type: 'saving', isTransfer: false, category: '' })} className={`flex-1 py-2.5 text-[11px] font-black rounded-xl transition-all ${draft.type === 'saving' ? 'bg-white dark:bg-slate-700 shadow-md text-amber-500 dark:text-amber-400' : 'text-slate-500 dark:text-slate-500'}`}>AHORRO</button>
+                <button type="button" onClick={() => patch({ isTransfer: true, type: 'expense', category: '' })} className={`flex-1 py-2.5 text-[11px] font-black rounded-xl transition-all ${draft.isTransfer ? 'bg-white dark:bg-slate-700 shadow-md text-blue-600 dark:text-blue-400' : 'text-slate-500 dark:text-slate-500'}`}>TRASPASO</button>
               </div>
 
               {draft.type === 'saving' && (
-                <div className="bg-amber-50 dark:bg-amber-900/20 p-4 rounded-2xl border-2 border-amber-100 dark:border-amber-800 flex items-center gap-4 animate-in slide-in-from-top-2">
+                <div className="bg-amber-50 dark:bg-amber-900/20 p-3 rounded-2xl border-2 border-amber-100 dark:border-amber-800 flex items-center gap-4 animate-in slide-in-from-top-2">
                     <div className="flex-1">
                         <label className="block text-[11px] font-black text-amber-700 dark:text-amber-400 uppercase tracking-widest mb-2">Dirección del ahorro</label>
                         <div className="grid grid-cols-2 gap-2">
                             <button
                                 type="button"
                                 onClick={() => patch({ savingDirection: 'deposit' })}
-                                className={`flex items-center justify-center gap-2 py-3 rounded-xl text-[10px] font-black transition-all ${draft.savingDirection === 'deposit' ? 'bg-amber-500 text-white shadow-lg' : 'bg-white dark:bg-slate-800 text-amber-500 border border-amber-200'}`}
+                                className={`flex items-center justify-center gap-2 py-2 rounded-xl text-[10px] font-black transition-all ${draft.savingDirection === 'deposit' ? 'bg-amber-500 text-white shadow-lg' : 'bg-white dark:bg-slate-800 text-amber-500 border border-amber-200'}`}
                             >
                                 <ArrowUpCircle size={14} /> APORTACIÓN
                             </button>
                             <button
                                 type="button"
                                 onClick={() => patch({ savingDirection: 'withdraw' })}
-                                className={`flex items-center justify-center gap-2 py-3 rounded-xl text-[10px] font-black transition-all ${draft.savingDirection === 'withdraw' ? 'bg-amber-600 text-white shadow-lg' : 'bg-white dark:bg-slate-800 text-amber-600 border border-amber-200'}`}
+                                className={`flex items-center justify-center gap-2 py-2 rounded-xl text-[10px] font-black transition-all ${draft.savingDirection === 'withdraw' ? 'bg-amber-600 text-white shadow-lg' : 'bg-white dark:bg-slate-800 text-amber-600 border border-amber-200'}`}
                             >
                                 <ArrowDownCircle size={14} /> RETIRADA
                             </button>
@@ -370,60 +370,60 @@ const TransactionModal: React.FC<TransactionModalProps> = ({ editingTx: initialT
                 </div>
               )}
 
-              <div className="space-y-6">
+              <div className="space-y-3">
                 <div>
-                  <label className="block text-[11px] font-black text-slate-700 dark:text-slate-400 uppercase tracking-widest mb-3">Descripción</label>
-                  <input type="text" value={draft.desc} onChange={e => patch({ desc: e.target.value })} className="w-full bg-slate-50 dark:bg-slate-800 border-2 border-slate-100 dark:border-slate-700 rounded-2xl p-5 font-bold outline-none focus:border-blue-400 dark:focus:border-blue-600 transition-all placeholder:text-slate-300 dark:placeholder:text-slate-600 text-slate-900 dark:text-white" placeholder="Ej: Supermercado..." required />
+                  <label className="block text-[10px] font-black text-slate-700 dark:text-slate-400 uppercase tracking-widest mb-1.5">Descripción</label>
+                  <input type="text" value={draft.desc} onChange={e => patch({ desc: e.target.value })} className="w-full bg-slate-50 dark:bg-slate-800 border-2 border-slate-100 dark:border-slate-700 rounded-xl px-3 py-2.5 font-bold outline-none focus:border-blue-400 dark:focus:border-blue-600 transition-all placeholder:text-slate-300 dark:placeholder:text-slate-600 text-slate-900 dark:text-white" placeholder="Ej: Supermercado..." required />
                 </div>
 
-                <div className="grid grid-cols-2 gap-6">
+                <div className="grid grid-cols-2 gap-3">
                   <div className="relative">
-                    <label className="block text-[11px] font-black text-slate-700 dark:text-slate-400 uppercase tracking-widest mb-3">Importe (€)</label>
+                    <label className="block text-[10px] font-black text-slate-700 dark:text-slate-400 uppercase tracking-widest mb-1.5">Importe (€)</label>
                     <input
                       type="number"
                       step="0.01"
                       value={draft.amount}
                       onChange={e => patch({ amount: e.target.value === '' ? '' : Number(e.target.value) })}
                       disabled={amountLocked}
-                      className={`w-full bg-slate-50 dark:bg-slate-800 border-2 border-slate-100 dark:border-slate-700 rounded-2xl p-5 font-black text-xl outline-none text-slate-900 dark:text-white ${amountLocked ? 'opacity-60 grayscale cursor-not-allowed' : ''}`}
+                      className={`w-full bg-slate-50 dark:bg-slate-800 border-2 border-slate-100 dark:border-slate-700 rounded-xl px-3 py-2.5 font-black text-lg outline-none text-slate-900 dark:text-white ${amountLocked ? 'opacity-60 grayscale cursor-not-allowed' : ''}`}
                       required
                     />
                     {amountLocked && (
-                      <div className="absolute top-10 right-4 text-blue-500 flex items-center gap-1">
+                      <div className="absolute top-[2.15rem] right-3 text-blue-500 flex items-center gap-1">
                         <Ban size={14} />
                       </div>
                     )}
                   </div>
                   <div>
-                    <label className="block text-[11px] font-black text-slate-700 dark:text-slate-400 uppercase tracking-widest mb-3">Fecha</label>
-                    <input type="date" value={draft.date} onChange={e => patch({ date: e.target.value })} className="w-full bg-slate-50 dark:bg-slate-800 border-2 border-slate-100 dark:border-slate-700 rounded-2xl p-5 font-bold outline-none text-slate-900 dark:text-white" required />
+                    <label className="block text-[10px] font-black text-slate-700 dark:text-slate-400 uppercase tracking-widest mb-1.5">Fecha</label>
+                    <input type="date" value={draft.date} onChange={e => patch({ date: e.target.value })} className="w-full bg-slate-50 dark:bg-slate-800 border-2 border-slate-100 dark:border-slate-700 rounded-xl px-3 py-2.5 font-bold outline-none text-slate-900 dark:text-white" required />
                   </div>
                 </div>
 
-                <div className="grid grid-cols-2 gap-6">
+                <div className="grid grid-cols-2 gap-3">
                   <div>
-                    <label className="block text-[11px] font-black text-slate-700 dark:text-slate-400 uppercase tracking-widest mb-3">
+                    <label className="block text-[10px] font-black text-slate-700 dark:text-slate-400 uppercase tracking-widest mb-1.5">
                       {draft.isTransfer ? 'Cuenta Origen' : draft.savingDirection === 'withdraw' ? 'Cuenta Destino' : 'Desde Cuenta'}
                     </label>
                     <div className="relative">
-                      <select value={draft.accountId} onChange={e => patch({ accountId: e.target.value })} className="w-full bg-slate-50 dark:bg-slate-800 border-2 border-slate-100 dark:border-slate-700 rounded-2xl p-5 font-bold outline-none appearance-none text-slate-900 dark:text-white">
+                      <select value={draft.accountId} onChange={e => patch({ accountId: e.target.value })} className="w-full bg-slate-50 dark:bg-slate-800 border-2 border-slate-100 dark:border-slate-700 rounded-xl px-3 py-2.5 font-bold outline-none appearance-none text-slate-900 dark:text-white">
                         {accounts.map(acc => <option key={acc.id} value={acc.id}>{acc.name}</option>)}
                       </select>
-                      <ChevronDown className="absolute right-5 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" size={18} />
+                      <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" size={16} />
                     </div>
                   </div>
                   <div>
-                    <label className="block text-[11px] font-black text-slate-700 dark:text-slate-400 uppercase tracking-widest mb-3">
+                    <label className="block text-[10px] font-black text-slate-700 dark:text-slate-400 uppercase tracking-widest mb-1.5">
                       {draft.isTransfer ? 'Cuenta Destino' : draft.type === 'saving' ? 'Hucha' : 'Categoría'}
                     </label>
                     <div className="relative">
                       {draft.isTransfer ? (
-                        <select value={draft.transferTargetId} onChange={e => patch({ transferTargetId: e.target.value })} className="w-full bg-slate-50 dark:bg-slate-800 border-2 border-slate-100 dark:border-slate-700 rounded-2xl p-5 font-bold outline-none appearance-none text-slate-900 dark:text-white" required>
+                        <select value={draft.transferTargetId} onChange={e => patch({ transferTargetId: e.target.value })} className="w-full bg-slate-50 dark:bg-slate-800 border-2 border-slate-100 dark:border-slate-700 rounded-xl px-3 py-2.5 font-bold outline-none appearance-none text-slate-900 dark:text-white" required>
                           <option value="">Selecciona destino</option>
                           {accounts.filter(a => a.id !== draft.accountId).map(acc => <option key={acc.id} value={acc.id}>{acc.name}</option>)}
                         </select>
                       ) : draft.type === 'saving' ? (
-                        <select value={draft.selectedSavingId} onChange={e => patch({ selectedSavingId: e.target.value })} className="w-full bg-slate-50 dark:bg-slate-800 border-2 border-slate-100 dark:border-slate-700 rounded-2xl p-5 font-bold outline-none appearance-none text-slate-900 dark:text-white" required>
+                        <select value={draft.selectedSavingId} onChange={e => patch({ selectedSavingId: e.target.value })} className="w-full bg-slate-50 dark:bg-slate-800 border-2 border-slate-100 dark:border-slate-700 rounded-xl px-3 py-2.5 font-bold outline-none appearance-none text-slate-900 dark:text-white" required>
                           <option value="">Selecciona hucha</option>
                           {savings.map(s => <option key={s.id} value={s.id}>{s.emoji} {s.name}</option>)}
                         </select>
@@ -432,13 +432,13 @@ const TransactionModal: React.FC<TransactionModalProps> = ({ editingTx: initialT
                           value={draft.category}
                           onChange={e => patch({ category: e.target.value })}
                           disabled={isCategoryDisabled}
-                          className={`w-full bg-slate-50 dark:bg-slate-800 border-2 border-slate-100 dark:border-slate-700 rounded-2xl p-5 font-bold outline-none appearance-none text-slate-900 dark:text-white ${isCategoryDisabled ? 'opacity-60 cursor-not-allowed bg-slate-100 dark:bg-slate-900' : ''}`}
+                          className={`w-full bg-slate-50 dark:bg-slate-800 border-2 border-slate-100 dark:border-slate-700 rounded-xl px-3 py-2.5 font-bold outline-none appearance-none text-slate-900 dark:text-white ${isCategoryDisabled ? 'opacity-60 cursor-not-allowed bg-slate-100 dark:bg-slate-900' : ''}`}
                           required
                         >
                           {categoryOptions.map(c => <option key={c} value={c}>{c}</option>)}
                         </select>
                       )}
-                      <ChevronDown className="absolute right-5 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" size={18} />
+                      <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" size={16} />
                     </div>
                   </div>
                 </div>
@@ -452,21 +452,21 @@ const TransactionModal: React.FC<TransactionModalProps> = ({ editingTx: initialT
                 )}
 
                 {!draft.isTransfer && draft.type !== 'saving' && (
-                  <div className="pt-4">
+                  <div>
                      <button
                        type="button"
                        onClick={() => patch({ isRefundLink: !draft.isRefundLink, category: draft.type === 'income' ? '' : draft.category })}
-                       className={`w-full flex items-center justify-between p-5 rounded-2xl border-2 transition-all ${draft.isRefundLink ? 'bg-blue-50 dark:bg-blue-900/20 border-blue-400 dark:border-blue-600 text-blue-700 dark:text-blue-400' : 'bg-slate-50 dark:bg-slate-800 border-slate-100 dark:border-slate-700 text-slate-400 dark:text-slate-600'}`}
+                       className={`w-full flex items-center justify-between px-3 py-2.5 rounded-xl border-2 transition-all ${draft.isRefundLink ? 'bg-blue-50 dark:bg-blue-900/20 border-blue-400 dark:border-blue-600 text-blue-700 dark:text-blue-400' : 'bg-slate-50 dark:bg-slate-800 border-slate-100 dark:border-slate-700 text-slate-400 dark:text-slate-600'}`}
                      >
                        <div className="flex items-center gap-3">
-                         <UserCheck size={20} />
-                         <span className="font-bold text-sm">Gestionar como Reembolso / Deuda</span>
+                         <UserCheck size={18} />
+                         <span className="font-bold text-sm">Reembolso / Deuda</span>
                        </div>
-                       <Check size={20} className={draft.isRefundLink ? 'text-blue-600 dark:text-blue-400 opacity-100' : 'opacity-0'} />
+                       <Check size={18} className={draft.isRefundLink ? 'text-blue-600 dark:text-blue-400 opacity-100' : 'opacity-0'} />
                      </button>
 
                      {draft.isRefundLink && (
-                       <div className="mt-4 p-5 bg-blue-50 dark:bg-blue-900/20 rounded-2xl border-2 border-blue-100 dark:border-blue-800 space-y-4 animate-in slide-in-from-top-2 duration-300">
+                       <div className="mt-3 p-4 bg-blue-50 dark:bg-blue-900/20 rounded-2xl border-2 border-blue-100 dark:border-blue-800 space-y-4 animate-in slide-in-from-top-2 duration-300">
                          {draft.type === 'expense' ? (
                            <>
                              <label className="block text-[11px] font-black text-blue-700 dark:text-blue-400 uppercase">Tu Parte (Gasto Neto)</label>
@@ -532,12 +532,12 @@ const TransactionModal: React.FC<TransactionModalProps> = ({ editingTx: initialT
                 </div>
               )}
 
-              <div className="flex flex-col gap-3 pt-6">
+              <div className="flex flex-col gap-2 pt-1">
                 <div className="flex gap-3">
                   <button
                     type="button"
                     onClick={requestClose}
-                    className={`flex-1 py-5 font-black rounded-2xl transition-colors ${confirmingClose ? 'bg-amber-500 text-white' : 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-400'}`}
+                    className={`flex-1 py-3 text-sm font-black rounded-2xl transition-colors ${confirmingClose ? 'bg-amber-500 text-white' : 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-400'}`}
                   >
                     {confirmingClose
                       ? `¿SEGURO? QUEDAN ${counts.pending} SIN GUARDAR`
@@ -548,7 +548,7 @@ const TransactionModal: React.FC<TransactionModalProps> = ({ editingTx: initialT
                     <button
                       type="button"
                       onClick={handleDiscardCurrent}
-                      className="flex-1 py-5 bg-rose-50 dark:bg-rose-900/20 text-rose-600 dark:text-rose-400 font-black rounded-2xl border-2 border-rose-100 dark:border-rose-900/50 transition-all hover:bg-rose-100"
+                      className="flex-1 py-3 text-sm bg-rose-50 dark:bg-rose-900/20 text-rose-600 dark:text-rose-400 font-black rounded-2xl border-2 border-rose-100 dark:border-rose-900/50 transition-all hover:bg-rose-100"
                     >
                       DESCARTAR
                     </button>
@@ -558,7 +558,7 @@ const TransactionModal: React.FC<TransactionModalProps> = ({ editingTx: initialT
                 <button
                   type="submit"
                   disabled={!!current && current.status !== 'pending'}
-                  className="w-full py-5 bg-blue-600 text-white font-black rounded-2xl shadow-xl shadow-blue-100 dark:shadow-none transition-all active:scale-95 disabled:opacity-50"
+                  className="w-full py-3.5 bg-blue-600 text-white font-black rounded-2xl shadow-xl shadow-blue-100 dark:shadow-none transition-all active:scale-95 disabled:opacity-50"
                 >
                   {editingTx ? 'GUARDAR' : counts.pending > 1 ? 'CONFIRMAR Y SIGUIENTE' : isScanSession ? 'CONFIRMAR Y TERMINAR' : 'CONFIRMAR'}
                 </button>
