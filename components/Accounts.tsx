@@ -322,7 +322,7 @@ const Accounts: React.FC = () => {
                       Registra las dos aportaciones —la tuya y la de la otra persona— con la categoría <strong className="text-slate-700 dark:text-slate-200">Traspaso</strong>: así mueven el saldo sin contar como ingreso tuyo.
                     </p>
                     <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-2 leading-relaxed">
-                      Cada aportación es <strong className="text-slate-700 dark:text-slate-200">entera de quien la hace</strong>: la tuya es el traspaso que sale de una de tus cuentas; la que entra sin salir de ninguna cuenta tuya es de la otra persona. Los gastos se restan enteros del saldo y en «Mi parte» cuentan según el porcentaje.
+                      Cada aportación es <strong className="text-slate-700 dark:text-slate-200">entera de quien la hace</strong>: la tuya es el traspaso que sale de una de tus cuentas; la que entra sin salir de ninguna cuenta tuya es de la otra persona. Los gastos se restan enteros del saldo de la cuenta, pero en tus gastos y presupuestos solo cuenta tu porcentaje.
                     </p>
                   </div>
                 )}

@@ -7,7 +7,7 @@ import {
   CalendarRange, Sun, Moon, LineChart as LineChartIcon, 
   LogOut, Loader2, Sparkles, CloudCheck, CloudUpload, RefreshCw,
   ChevronLeft, ChevronRight, AlertTriangle, CloudOff,
-  RefreshCcw, Download, Upload, ShieldCheck, History, Users
+  RefreshCcw, Download, Upload, ShieldCheck, History
 } from 'lucide-react';
 import { FinanceState, Account, Saving, Refund, Transaction, Budget, AIChallenge, ExtraSaving, ChatMessage, AuraReport, ExpenseReminder, ReminderFulfilment } from './types';
 import { INITIAL_DATA } from './constants';
@@ -131,10 +131,8 @@ interface FinanceContextType extends FinanceState {
   getPeriodAggregate: (key: string) => PeriodAggregate;
 
   // Cuenta conjunta. El libro contable (saldos, lista de movimientos) siempre va
-  // integro; `viewIndex` es el que respeta el selector de importes.
+  // integro; `viewIndex` cuenta solo tu parte, que es lo que se analiza siempre.
   viewIndex: PeriodIndex;
-  amountView: 'full' | 'mine';
-  setAmountView: (view: 'full' | 'mine') => void;
   hasSharedAccounts: boolean;
   getOwnedAccountBalance: (accountId: string, dateStr: string) => number;
   
@@ -193,16 +191,6 @@ const App: React.FC = () => {
   const [blockedWrite, setBlockedWrite] = useState<DestructiveVerdict | null>(null);
   const overrideGuardRef = useRef(false);
   const lastSnapshotRef = useRef<Snapshot | null>(null);
-  // Selector de importes de las cuentas compartidas. Vive en localStorage y NO en
-  // FinanceState: es una preferencia de este dispositivo, y meterla en el estado
-  // haria que cada vez que se cambia se subiera el documento entero a la nube.
-  const [amountView, setAmountViewState] = useState<'full' | 'mine'>(
-    () => (safeGetItem('finanzas_pro_amount_view') === 'full' ? 'full' : 'mine'),
-  );
-  const setAmountView = useCallback((view: 'full' | 'mine') => {
-    setAmountViewState(view);
-    safeSetItem('finanzas_pro_amount_view', view);
-  }, []);
   const [isAppInitializing, setIsAppInitializing] = useState(true); 
   const [isSyncing, setIsSyncing] = useState(false); 
   const [syncError, setSyncError] = useState(false); 
@@ -795,7 +783,8 @@ const App: React.FC = () => {
     if (!hasSharedAccounts) return periodIndex;
     return buildPeriodIndex(state.transactions, buildIndexWeights(state.accounts, state.savings, state.transactions));
   }, [hasSharedAccounts, periodIndex, state.transactions, state.accounts, state.savings]);
-  const viewIndex = amountView === 'mine' ? ownedIndex : periodIndex;
+  // El gasto conjunto no interesa: el analisis cuenta siempre solo tu parte.
+  const viewIndex = ownedIndex;
 
   // Quien hizo cada aportacion a una cuenta compartida (ver services/ownership).
   const transferWeights = useMemo(
@@ -830,8 +819,6 @@ const App: React.FC = () => {
     periodIndex,
     getPeriodAggregate,
     viewIndex,
-    amountView,
-    setAmountView,
     hasSharedAccounts,
     getOwnedAccountBalance,
     isGuest,
@@ -1146,7 +1133,7 @@ const App: React.FC = () => {
       const periods: string[] = Array.from(new Set(state.budgets.filter(b => isMonthKey(b.period)).map(b => b.period as string)));
       return periods.sort((a, b) => b.localeCompare(a));
     },
-  }), [state, isGuest, isSyncing, syncError, blockedWrite, confirmBlockedWrite, listVersions, restoreVersion, restoreFromFile, undoCount, budgetUndoCount, getAccountHistoricalBalance, getSavingHistoricalBalance, getNetWorthHistorical, periodIndex, getPeriodAggregate, viewIndex, amountView, hasSharedAccounts, getOwnedAccountBalance, loginAsGuest, retrySync, manualRefresh, saveData, syncRefundsWithTransactions]);
+  }), [state, isGuest, isSyncing, syncError, blockedWrite, confirmBlockedWrite, listVersions, restoreVersion, restoreFromFile, undoCount, budgetUndoCount, getAccountHistoricalBalance, getSavingHistoricalBalance, getNetWorthHistorical, periodIndex, getPeriodAggregate, viewIndex, hasSharedAccounts, getOwnedAccountBalance, loginAsGuest, retrySync, manualRefresh, saveData, syncRefundsWithTransactions]);
 
   if (isAppInitializing) { 
     return (
@@ -1596,7 +1583,7 @@ const Sidebar = ({ isOpen, onClose, onLogout, isGuest, session }: { isOpen: bool
 };
 
 const Header = ({ onMenuClick }: { onMenuClick: () => void }) => {
-  const { currentDate, changePeriod, setPeriod, viewMode, setViewMode, theme, toggleTheme, amountView, setAmountView, hasSharedAccounts } = useFinance();
+  const { currentDate, changePeriod, setPeriod, viewMode, setViewMode, theme, toggleTheme } = useFinance();
   const monthNames = ["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"];
   const [isPeriodDropdownOpen, setIsPeriodDropdownOpen] = useState(false);
   const currentFormatted = useMemo(() => {
@@ -1614,19 +1601,6 @@ const Header = ({ onMenuClick }: { onMenuClick: () => void }) => {
         </div>
       </div>
       <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
-        {hasSharedAccounts && (
-          <button
-            onClick={() => setAmountView(amountView === 'mine' ? 'full' : 'mine')}
-            title={amountView === 'mine'
-              ? 'Viendo tu parte de las cuentas compartidas. Pulsa para ver los importes completos.'
-              : 'Viendo los importes completos de las cuentas compartidas. Pulsa para ver solo tu parte.'}
-            aria-label={amountView === 'mine' ? 'Ver importes completos' : 'Ver solo mi parte'}
-            className={`h-10 min-w-10 px-2.5 flex items-center justify-center gap-1.5 rounded-xl shadow-sm transition-all text-[10px] font-black uppercase tracking-wider ${amountView === 'mine' ? 'bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400' : 'bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400'}`}
-          >
-            <Users size={16} />
-            <span className="hidden sm:inline">{amountView === 'mine' ? 'Mi parte' : 'Completo'}</span>
-          </button>
-        )}
         <button onClick={toggleTheme} className="h-10 w-10 flex items-center justify-center rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 shadow-sm transition-all">{theme === 'light' ? <Moon size={20} /> : <Sun size={20} />}</button>
       </div>
     </header>
