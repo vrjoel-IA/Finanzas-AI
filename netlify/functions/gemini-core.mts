@@ -316,6 +316,16 @@ const RECEIPT_PROMPT = `Analiza esta captura de pantalla de movimientos bancario
         1. Si la imagen tiene FONDO BLANCO con partes o acentos VERDES, identifica la cuenta como "Banco Principal".
         2. Si la imagen tiene FONDO NEGRO o muy oscuro (Modo Oscuro), identifica la cuenta como "REVOLUT".
         
+        ORDEN DE LOS MOVIMIENTOS (MUY IMPORTANTE):
+        - En las capturas los movimientos van de ABAJO A ARRIBA: el de más abajo es el MÁS ANTIGUO
+          y el de más arriba el MÁS RECIENTE. Léelos siempre en ese sentido.
+        - Devuelve la lista en orden cronológico: primero el más antiguo (el de abajo) y por último
+          el más reciente (el de arriba).
+        - Un movimiento nunca es más antiguo que el que tiene debajo. Si a uno le falta la fecha,
+          dedúcela de sus vecinos respetando ese orden.
+        - Si la captura muestra el saldo tras cada movimiento, el saldo de una fila es el de la fila
+          de debajo más o menos su importe: úsalo para confirmar si es abono o pago.
+
         INSTRUCCIONES DE CONTENIDO:
         - Extrae UNA LISTA de todas las transacciones visibles.
         - Para cada una, determina:

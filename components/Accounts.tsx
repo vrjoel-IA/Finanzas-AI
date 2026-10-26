@@ -3,10 +3,10 @@ import React, { useState } from 'react';
 import { useFinance } from '../App';
 import { Plus, Trash2, Edit2, ArrowRightLeft, CreditCard, Banknote, Landmark, X, Check, Users } from 'lucide-react';
 import { Account } from '../types';
-import { ownershipWeight, isShared } from '../services/ownership';
+import { isShared } from '../services/ownership';
 
 const Accounts: React.FC = () => {
-  const { accounts, currentDate, getAccountHistoricalBalance, addAccount, updateAccount, deleteAccount, addTransaction, theme } = useFinance();
+  const { accounts, currentDate, getAccountHistoricalBalance, getOwnedAccountBalance, addAccount, updateAccount, deleteAccount, addTransaction, theme } = useFinance();
   const [isAdding, setIsAdding] = useState(false);
   const [editingAccount, setEditingAccount] = useState<Account | null>(null);
   const [isTransferring, setIsTransferring] = useState(false);
@@ -194,7 +194,7 @@ const Accounts: React.FC = () => {
                 <div className="mt-3 flex items-center gap-2 px-3 py-2 bg-blue-50 dark:bg-blue-900/20 rounded-xl border border-blue-100 dark:border-blue-900/40">
                   <Users size={14} className="text-blue-600 dark:text-blue-400 shrink-0" />
                   <span className="text-[11px] font-bold text-blue-700 dark:text-blue-300">
-                    Tu parte: {Math.round(displayBalance * ownershipWeight(acc.ownershipPercent)).toLocaleString('es-ES')}€
+                    Tu parte: {Math.round(getOwnedAccountBalance(acc.id, currentDate)).toLocaleString('es-ES')}€
                   </span>
                   <span className="text-[10px] font-black text-blue-400 dark:text-blue-500 ml-auto">{acc.ownershipPercent}%</span>
                 </div>
@@ -313,6 +313,9 @@ const Accounts: React.FC = () => {
                     </p>
                     <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-2 leading-relaxed">
                       Registra las dos aportaciones —la tuya y la de la otra persona— con la categoría <strong className="text-slate-700 dark:text-slate-200">Traspaso</strong>: así mueven el saldo sin contar como ingreso tuyo.
+                    </p>
+                    <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-2 leading-relaxed">
+                      Cada aportación es <strong className="text-slate-700 dark:text-slate-200">entera de quien la hace</strong>: la tuya es el traspaso que sale de una de tus cuentas; la que entra sin salir de ninguna cuenta tuya es de la otra persona. Los gastos se restan enteros del saldo y en «Mi parte» cuentan según el porcentaje.
                     </p>
                   </div>
                 )}

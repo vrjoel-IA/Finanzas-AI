@@ -28,7 +28,7 @@ import type { Snapshot } from './services/versionHistory';
 import type { DestructiveVerdict } from './services/stateGuard';
 import { buildPeriodIndex, aggregatePeriod } from './services/periodIndex';
 import type { PeriodIndex, PeriodAggregate } from './services/periodIndex';
-import { buildIndexWeights, hasSharedEntities, ownershipWeight } from './services/ownership';
+import { buildIndexWeights, buildTransferWeights, hasSharedEntities, ownedAccountBalance } from './services/ownership';
 import { resolveEffectiveBudgets, materializeBudgets, saveBudgetInMonth, removeBudgetFromMonth, budgetKey } from './services/budgetPlan';
 import type { EffectiveBudget } from './services/budgetPlan';
 import { isMonthKey, normalizePeriodForView } from './services/periods';
@@ -793,14 +793,27 @@ const App: React.FC = () => {
   );
   const ownedIndex = useMemo(() => {
     if (!hasSharedAccounts) return periodIndex;
-    return buildPeriodIndex(state.transactions, buildIndexWeights(state.accounts, state.savings));
+    return buildPeriodIndex(state.transactions, buildIndexWeights(state.accounts, state.savings, state.transactions));
   }, [hasSharedAccounts, periodIndex, state.transactions, state.accounts, state.savings]);
   const viewIndex = amountView === 'mine' ? ownedIndex : periodIndex;
 
+  // Quien hizo cada aportacion a una cuenta compartida (ver services/ownership).
+  const transferWeights = useMemo(
+    () => (hasSharedAccounts ? buildTransferWeights(state.transactions, state.accounts) : {}),
+    [hasSharedAccounts, state.transactions, state.accounts],
+  );
+
   const getOwnedAccountBalance = useCallback((accountId: string, dateStr: string) => {
     const account = state.accounts.find(a => a.id === accountId);
-    return getAccountHistoricalBalance(accountId, dateStr) * ownershipWeight(account?.ownershipPercent);
-  }, [state.accounts, getAccountHistoricalBalance]);
+    if (!account) return 0;
+    let cutoffDate = dateStr;
+    if (dateStr.length === 4) cutoffDate = `${dateStr}-12-31`;
+    else if (dateStr.length === 7) {
+      const [y, m] = dateStr.split('-').map(Number);
+      cutoffDate = `${dateStr}-${new Date(y, m, 0).getDate()}`;
+    }
+    return ownedAccountBalance(account, state.transactions, cutoffDate, transferWeights);
+  }, [state.accounts, state.transactions, transferWeights]);
 
   const getPeriodAggregate = useCallback(
     (key: string) => aggregatePeriod(periodIndex, key),

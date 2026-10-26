@@ -33,7 +33,9 @@ export function loadServices() {
     './txClassify': txClassify,
     './periods': periods,
   });
-  const ownership = loadModule('../services/ownership.ts');
+  const ownership = loadModule('../services/ownership.ts', {
+    './txClassify': txClassify,
+  });
   const dashboardBlocks = loadModule('../services/dashboardBlocks.ts');
   const budgetPlan = loadModule('../services/budgetPlan.ts', {
     './periodIndex': periodIndex,

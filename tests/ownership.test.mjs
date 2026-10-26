@@ -127,3 +127,79 @@ test('ponderar no altera las transacciones de entrada', () => {
   buildPeriodIndex(transactions, buildIndexWeights([account({ id: 'conjunta', ownershipPercent: 50 })], []));
   assert.equal(JSON.stringify(transactions), before);
 });
+
+// ---------------------------------------------------------------------------
+// Aportaciones a la cuenta conjunta: cada una es entera de quien la hace
+// ---------------------------------------------------------------------------
+
+const { buildTransferWeights, ownedAccountBalance } = ownership;
+
+const couple = () => [
+  account({ id: 'mia' }),
+  account({ id: 'conjunta', ownershipPercent: 50, initialBalance: 0 }),
+];
+
+// Mi aportacion: las dos patas que crea el boton Transferir.
+const myContribution = (amount, date = '2026-09-01', id = 'm') => [
+  tx({ id: id + '-out', date, amount, category: 'Traspaso', type: 'expense', accountId: 'mia' }),
+  tx({ id: id + '-in', date, amount, category: 'Traspaso', type: 'income', accountId: 'conjunta' }),
+];
+// La de la otra persona: entra en la conjunta sin salir de ninguna cuenta mia.
+const partnerContribution = (amount, date = '2026-09-01', id = 'p') =>
+  tx({ id, date, amount, category: 'Traspaso', type: 'income', accountId: 'conjunta' });
+
+test('mi aportacion cuenta entera y la de la otra persona no cuenta', () => {
+  const transactions = [...myContribution(27), partnerContribution(25)];
+  const weights = buildTransferWeights(transactions, couple());
+  assert.equal(weights['m-in'], 1);
+  assert.equal(weights['p'], 0);
+  assert.equal(weights['m-out'], undefined, 'la pata de mi cuenta no se toca');
+  assert.equal(ownedAccountBalance(couple()[1], transactions, '2026-09-30', weights), 27);
+});
+
+test('los gastos de la conjunta restan enteros del saldo y a medias de mi parte', () => {
+  const transactions = [
+    ...myContribution(27),
+    partnerContribution(25),
+    tx({ id: 'g', amount: 40, category: 'Alimentacion', type: 'expense', accountId: 'conjunta' }),
+  ];
+  const accounts = couple();
+  const weights = buildTransferWeights(transactions, accounts);
+  assert.equal(ownedAccountBalance(accounts[1], transactions, '2026-09-30', weights), 27 - 20);
+
+  const full = buildPeriodIndex(transactions);
+  const owned = buildPeriodIndex(transactions, buildIndexWeights(accounts, [], transactions));
+  assert.equal(accountDeltaAt(full, 'conjunta', '2026-09'), 12, 'el libro sigue integro');
+  assert.equal(accountDeltaAt(owned, 'conjunta', '2026-09'), 7);
+  assert.equal(aggregatePeriod(owned, '2026-09').baseExpense, 20, 'mi gasto es la mitad');
+  assert.equal(aggregatePeriod(owned, '2026-09').baseIncome, 0, 'las aportaciones no son ingreso');
+  // Al aportar, mi dinero solo cambia de sitio: lo que sale de mi cuenta entra entero en mi parte.
+  assert.equal(accountDeltaAt(owned, 'mia', '2026-09') + 27, 0);
+});
+
+test('las dos patas registradas por separado se emparejan con unos dias de margen', () => {
+  const transactions = [
+    tx({ id: 'out', date: '2026-09-01', amount: 25, category: 'Traspaso', type: 'expense', accountId: 'mia' }),
+    tx({ id: 'in', date: '2026-09-03', amount: 25, category: 'Traspaso', type: 'income', accountId: 'conjunta' }),
+    tx({ id: 'lejos', date: '2026-09-20', amount: 25, category: 'Traspaso', type: 'income', accountId: 'conjunta' }),
+  ];
+  const weights = buildTransferWeights(transactions, couple());
+  assert.equal(weights['in'], 1);
+  assert.equal(weights['lejos'], 0, 'una salida mia solo empareja una entrada');
+});
+
+test('sacar dinero de la conjunta a una cuenta mia es mio entero', () => {
+  const transactions = [
+    tx({ id: 'out', amount: 30, category: 'Traspaso', type: 'expense', accountId: 'conjunta' }),
+    tx({ id: 'in', amount: 30, category: 'Traspaso', type: 'income', accountId: 'mia' }),
+  ];
+  assert.equal(buildTransferWeights(transactions, couple())['out'], 1);
+});
+
+test('sin cuentas compartidas no hay pesos por movimiento y nada se muta', () => {
+  const transactions = [...myContribution(27)];
+  const before = JSON.stringify(transactions);
+  assert.equal(Object.keys(buildTransferWeights(transactions, [account({ id: 'mia' }), account({ id: 'conjunta' })])).length, 0);
+  buildTransferWeights(transactions, couple());
+  assert.equal(JSON.stringify(transactions), before);
+});

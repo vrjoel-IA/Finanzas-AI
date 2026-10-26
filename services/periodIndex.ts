@@ -61,6 +61,8 @@ export interface IndexWeights {
   accounts?: Record<string, number>;
   /** savingId -> 0..1. */
   savings?: Record<string, number>;
+  /** txId -> 0..1. Manda sobre el peso de la cuenta (aportaciones a la cuenta conjunta). */
+  transactions?: Record<string, number>;
 }
 
 const emptyCategoryFlow = (): CategoryFlow => ({ expense: 0, income: 0, refunded: 0, count: 0 });
@@ -136,7 +138,10 @@ export function buildPeriodIndex(transactions: Transaction[], weights?: IndexWei
 
     const raw = Number(t.amount);
     const base = isFinite(raw) ? raw : 0;
-    const amount = base * weightOf(weights && weights.accounts, t.accountId);
+    const txWeight = weights && weights.transactions ? weights.transactions[t.id] : undefined;
+    const amount = base * (typeof txWeight === 'number' && isFinite(txWeight)
+      ? txWeight
+      : weightOf(weights && weights.accounts, t.accountId));
 
     let agg = months[key];
     if (!agg) {
