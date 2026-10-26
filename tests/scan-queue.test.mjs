@@ -283,3 +283,24 @@ test('un traspaso a la cuenta compartida puede llevar la aportacion de la otra p
   assert.equal(payload.partner.date, '2026-09-14');
   assert.equal(payload.in.amount, 27, 'mi parte no cambia');
 });
+
+test('lo que mete la otra persona entra en la compartida sin salir de ninguna cuenta', () => {
+  const { PARTNER_ORIGIN } = scanQueue;
+  const draft = { ...emptyDraft(ctx()), amount: 25, date: '2026-09-14', desc: 'Bizum Laura', isTransfer: true, accountId: PARTNER_ORIGIN, transferTargetId: 'a2' };
+  const payload = payloadFromDraft(draft, nombreCuenta);
+  assert.equal(payload.kind, 'single', 'un solo movimiento, sin salida');
+  assert.equal(payload.tx.accountId, 'a2');
+  assert.equal(payload.tx.type, 'income');
+  assert.equal(payload.tx.category, 'Traspaso');
+  assert.equal(payload.tx.description, 'Bizum Laura');
+});
+
+test('un traspaso escaneado que entra en la compartida deja el origen por elegir', () => {
+  const contexto = ctx({ accounts: [{ id: 'a1', name: 'Banco Principal' }, { id: 'a2', name: 'Revolut', shared: true }] });
+  const item = { description: 'De Laura', amount: 25, date: '2026-09-14', category: 'Traspaso', type: 'income', isTransfer: true, isSaving: false, isRefund: false, suggestedAccount: 'Revolut' };
+  const draft = draftFromScan(item, contexto);
+  assert.equal(draft.transferTargetId, 'a2');
+  assert.equal(draft.accountId, '');
+  const privada = draftFromScan({ ...item, suggestedAccount: 'Banco Principal' }, contexto);
+  assert.equal(privada.accountId, 'a1', 'en una cuenta no compartida no cambia nada');
+});

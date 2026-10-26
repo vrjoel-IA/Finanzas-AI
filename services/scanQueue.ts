@@ -62,7 +62,8 @@ export interface ScanSlot {
 }
 
 export interface DraftContext {
-  accounts: { id: string; name: string }[];
+  /** shared = cuenta compartida (titularidad parcial). */
+  accounts: { id: string; name: string; shared?: boolean }[];
   budgets: { category: string; type?: string }[];
   /** 'YYYY-MM-DD'. Parametro para que la cola no dependa del reloj del dispositivo. */
   today: string;
@@ -191,7 +192,20 @@ export function draftFromScan(item: ScannedTransaction, ctx: DraftContext): Scan
     isRefundLink: !!item.isRefund,
     isTransfer: !!item.isTransfer,
     savingDirection: item.isSaving && item.type === 'income' ? 'withdraw' : 'deposit',
+    ...incomingSharedTransfer(item, matchedAccount, ctx),
   };
+}
+
+/**
+ * Un traspaso que ENTRA en una cuenta compartida se ha leido en la captura de
+ * esa cuenta: la compartida es el destino, no el origen. El origen se deja sin
+ * elegir, porque desde la captura no se sabe si lo metiste tu o la otra persona.
+ */
+function incomingSharedTransfer(item: ScannedTransaction, matchedAccount: string | null, ctx: DraftContext): Partial<ScanDraft> {
+  if (!item.isTransfer || item.type !== 'income' || !matchedAccount) return {};
+  const account = ctx.accounts.find(a => a.id === matchedAccount);
+  if (!account || !account.shared) return {};
+  return { accountId: '', transferTargetId: matchedAccount };
 }
 
 /** El borrador de un movimiento que ya existe, para editarlo. */
@@ -274,12 +288,18 @@ export type DraftPayload =
   | { kind: 'single'; tx: TxPayload; myPart?: number }
   | { kind: 'transfer'; out: TxPayload; in: TxPayload; partner?: TxPayload };
 
+/**
+ * Origen de un traspaso que no sale de ninguna cuenta tuya: lo mete la otra
+ * persona en la cuenta compartida. No es un id de cuenta y nunca se guarda.
+ */
+export const PARTNER_ORIGIN = '__otra_persona__';
+
 /** La aportacion de la otra persona: un Traspaso que entra en la cuenta compartida sin salir de ninguna tuya. */
-export function partnerContributionTx(accountId: string, amount: number, date: string): TxPayload {
+export function partnerContributionTx(accountId: string, amount: number, date: string, description?: string): TxPayload {
   return {
     date,
     amount,
-    description: 'Aportación de la otra persona',
+    description: description || 'Aportación de la otra persona',
     category: 'Traspaso',
     type: 'income',
     accountId,
@@ -297,6 +317,11 @@ export function partnerContributionTx(accountId: string, amount: number, date: s
 export function payloadFromDraft(draft: ScanDraft, accountName: (id: string) => string): DraftPayload | null {
   if (draft.amount === '') return null;
   const amount = Number(draft.amount);
+
+  if (draft.isTransfer && draft.accountId === PARTNER_ORIGIN) {
+    // Solo entra en la compartida: no sale de ningun sitio.
+    return { kind: 'single', tx: partnerContributionTx(draft.transferTargetId, amount, draft.date, draft.desc.trim()) };
+  }
 
   if (draft.isTransfer) {
     return {

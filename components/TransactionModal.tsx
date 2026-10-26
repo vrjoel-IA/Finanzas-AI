@@ -26,6 +26,7 @@ import {
   prevPendingId,
   countByStatus,
   payloadFromDraft,
+  PARTNER_ORIGIN,
 } from '../services/scanQueue';
 import type { ScanDraft, ScanSlot } from '../services/scanQueue';
 import { suggestRemindersForDraft } from '../services/expenseReminders';
@@ -75,7 +76,7 @@ const TransactionModal: React.FC<TransactionModalProps> = ({ editingTx: initialT
   // El contexto de carga se congela al abrir: si cambiasen las cuentas a mitad
   // de sesion, los borradores ya creados no deben moverse solos.
   const [loadContext] = useState(() => ({
-    accounts: accounts.map(a => ({ id: a.id, name: a.name })),
+    accounts: accounts.map(a => ({ id: a.id, name: a.name, shared: isShared(a) })),
     budgets: budgets.map(b => ({ category: b.category, type: b.type })),
     today: todayKey(),
   }));
@@ -262,6 +263,9 @@ const TransactionModal: React.FC<TransactionModalProps> = ({ editingTx: initialT
     advanceFrom(current.id, 'discarded');
   };
 
+  const hasSharedAccount = accounts.some(a => isShared(a));
+  // Fuera de Traspaso el movimiento siempre es de una cuenta tuya.
+  const ownOrigin = draft.accountId && draft.accountId !== PARTNER_ORIGIN ? {} : { accountId: accounts[0] ? accounts[0].id : '' };
   const isCategoryDisabled = draft.type === 'income' && draft.isRefundLink && !!draft.selectedRefundId;
   const amountLocked = isScanSession && !editingTx;
   const canNavigate = isScanSession && counts.pending > 1;
@@ -340,9 +344,9 @@ const TransactionModal: React.FC<TransactionModalProps> = ({ editingTx: initialT
 
             <form onSubmit={handleSubmit} className="space-y-3">
               <div className="flex bg-slate-100 dark:bg-slate-800 p-1 rounded-2xl border border-slate-200 dark:border-slate-700 shadow-inner">
-                <button type="button" onClick={() => patch({ type: 'expense', isTransfer: false, category: '' })} className={`flex-1 py-2.5 text-[11px] font-black rounded-xl transition-all ${draft.type === 'expense' && !draft.isTransfer ? 'bg-white dark:bg-slate-700 shadow-md text-rose-600 dark:text-rose-400' : 'text-slate-500 dark:text-slate-500'}`}>GASTO</button>
-                <button type="button" onClick={() => patch({ type: 'income', isTransfer: false, category: '' })} className={`flex-1 py-2.5 text-[11px] font-black rounded-xl transition-all ${draft.type === 'income' && !draft.isTransfer ? 'bg-white dark:bg-slate-700 shadow-md text-emerald-600 dark:text-emerald-400' : 'text-slate-500 dark:text-slate-500'}`}>INGRESO</button>
-                <button type="button" onClick={() => patch({ type: 'saving', isTransfer: false, category: '' })} className={`flex-1 py-2.5 text-[11px] font-black rounded-xl transition-all ${draft.type === 'saving' ? 'bg-white dark:bg-slate-700 shadow-md text-amber-500 dark:text-amber-400' : 'text-slate-500 dark:text-slate-500'}`}>AHORRO</button>
+                <button type="button" onClick={() => patch({ type: 'expense', isTransfer: false, category: '', ...ownOrigin })} className={`flex-1 py-2.5 text-[11px] font-black rounded-xl transition-all ${draft.type === 'expense' && !draft.isTransfer ? 'bg-white dark:bg-slate-700 shadow-md text-rose-600 dark:text-rose-400' : 'text-slate-500 dark:text-slate-500'}`}>GASTO</button>
+                <button type="button" onClick={() => patch({ type: 'income', isTransfer: false, category: '', ...ownOrigin })} className={`flex-1 py-2.5 text-[11px] font-black rounded-xl transition-all ${draft.type === 'income' && !draft.isTransfer ? 'bg-white dark:bg-slate-700 shadow-md text-emerald-600 dark:text-emerald-400' : 'text-slate-500 dark:text-slate-500'}`}>INGRESO</button>
+                <button type="button" onClick={() => patch({ type: 'saving', isTransfer: false, category: '', ...ownOrigin })} className={`flex-1 py-2.5 text-[11px] font-black rounded-xl transition-all ${draft.type === 'saving' ? 'bg-white dark:bg-slate-700 shadow-md text-amber-500 dark:text-amber-400' : 'text-slate-500 dark:text-slate-500'}`}>AHORRO</button>
                 <button type="button" onClick={() => patch({ isTransfer: true, type: 'expense', category: '' })} className={`flex-1 py-2.5 text-[11px] font-black rounded-xl transition-all ${draft.isTransfer ? 'bg-white dark:bg-slate-700 shadow-md text-blue-600 dark:text-blue-400' : 'text-slate-500 dark:text-slate-500'}`}>TRASPASO</button>
               </div>
 
@@ -406,7 +410,9 @@ const TransactionModal: React.FC<TransactionModalProps> = ({ editingTx: initialT
                       {draft.isTransfer ? 'Cuenta Origen' : draft.savingDirection === 'withdraw' ? 'Cuenta Destino' : 'Desde Cuenta'}
                     </label>
                     <div className="relative">
-                      <select value={draft.accountId} onChange={e => patch({ accountId: e.target.value })} className="w-full bg-slate-50 dark:bg-slate-800 border-2 border-slate-100 dark:border-slate-700 rounded-xl px-3 h-12 w-full min-w-0 appearance-none text-sm sm:text-base font-bold outline-none appearance-none text-slate-900 dark:text-white">
+                      <select value={draft.accountId} onChange={e => patch({ accountId: e.target.value, ...(e.target.value === PARTNER_ORIGIN ? { partnerAmount: '' } : {}) })} required className="w-full bg-slate-50 dark:bg-slate-800 border-2 border-slate-100 dark:border-slate-700 rounded-xl px-3 h-12 w-full min-w-0 appearance-none text-sm sm:text-base font-bold outline-none appearance-none text-slate-900 dark:text-white">
+                        {draft.isTransfer && <option value="">Selecciona origen</option>}
+                        {draft.isTransfer && hasSharedAccount && <option value={PARTNER_ORIGIN}>👥 Otra persona</option>}
                         {accounts.map(acc => <option key={acc.id} value={acc.id}>{acc.name}</option>)}
                       </select>
                       <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" size={16} />
@@ -420,7 +426,7 @@ const TransactionModal: React.FC<TransactionModalProps> = ({ editingTx: initialT
                       {draft.isTransfer ? (
                         <select value={draft.transferTargetId} onChange={e => patch({ transferTargetId: e.target.value })} className="w-full bg-slate-50 dark:bg-slate-800 border-2 border-slate-100 dark:border-slate-700 rounded-xl px-3 h-12 w-full min-w-0 appearance-none text-sm sm:text-base font-bold outline-none appearance-none text-slate-900 dark:text-white" required>
                           <option value="">Selecciona destino</option>
-                          {accounts.filter(a => a.id !== draft.accountId).map(acc => <option key={acc.id} value={acc.id}>{acc.name}</option>)}
+                          {accounts.filter(a => a.id !== draft.accountId && (draft.accountId !== PARTNER_ORIGIN || isShared(a))).map(acc => <option key={acc.id} value={acc.id}>{acc.name}</option>)}
                         </select>
                       ) : draft.type === 'saving' ? (
                         <select value={draft.selectedSavingId} onChange={e => patch({ selectedSavingId: e.target.value })} className="w-full bg-slate-50 dark:bg-slate-800 border-2 border-slate-100 dark:border-slate-700 rounded-xl px-3 h-12 w-full min-w-0 appearance-none text-sm sm:text-base font-bold outline-none appearance-none text-slate-900 dark:text-white" required>
@@ -443,7 +449,7 @@ const TransactionModal: React.FC<TransactionModalProps> = ({ editingTx: initialT
                   </div>
                 </div>
 
-                {draft.isTransfer && isShared(accounts.find(a => a.id === draft.transferTargetId)) && (
+                {draft.isTransfer && draft.accountId !== PARTNER_ORIGIN && isShared(accounts.find(a => a.id === draft.transferTargetId)) && (
                   <PartnerContributionField
                     value={draft.partnerAmount}
                     myAmount={draft.amount}
