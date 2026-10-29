@@ -23,6 +23,11 @@ export interface Saving {
   targetAmount?: number;
   isInvestment: boolean;
   growthRate?: number;
+  /**
+   * Bien que no es dinero disponible (una plaza de garaje, un piso). Cuenta en
+   * el patrimonio, pero se separa del ahorro disponible. Ausente = es dinero.
+   */
+  isIlliquid?: boolean;
   color: string;
   emoji?: string;
   // Titularidad parcial (cuenta o hucha compartida, p.ej. con la pareja).

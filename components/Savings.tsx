@@ -1,7 +1,7 @@
 
 import React, { useMemo, useState } from 'react';
 import { useFinance } from '../App';
-import { Plus, PiggyBank, TrendingUp, ArrowRightLeft, Percent, X, Edit2, Trash2, Check } from 'lucide-react';
+import { Plus, PiggyBank, TrendingUp, ArrowRightLeft, Percent, X, Edit2, Trash2, Check, Lock } from 'lucide-react';
 import { Saving } from '../types';
 import { savingFlow } from '../services/periodIndex';
 import { isMonthKey } from '../services/periods';
@@ -36,6 +36,7 @@ const Savings: React.FC = () => {
   const [targetInput, setTargetInput] = useState<number | ''>('');
   const [isInvestment, setIsInvestment] = useState(false);
   const [growthRateInput, setGrowthRateInput] = useState<number | ''>('');
+  const [isIlliquid, setIsIlliquid] = useState(false);
   const [emoji, setEmoji] = useState('💰');
 
   // Adjustment Modal State
@@ -46,6 +47,7 @@ const Savings: React.FC = () => {
     setAmountInput('');
     setTargetInput('');
     setIsInvestment(false);
+    setIsIlliquid(false);
     setGrowthRateInput('');
     setEmoji('💰');
     setMonthlyGoalInput('');
@@ -58,6 +60,7 @@ const Savings: React.FC = () => {
     setAmountInput(s.currentAmount);
     setTargetInput(s.targetAmount || '');
     setIsInvestment(s.isInvestment);
+    setIsIlliquid(!!s.isIlliquid);
     setGrowthRateInput(s.growthRate || '');
     setEmoji(s.emoji || (s.isInvestment ? '📈' : '💰'));
     const goal = goalOf(s.id);
@@ -83,6 +86,7 @@ const Savings: React.FC = () => {
         targetAmount: finalTarget,
         isInvestment,
         growthRate: finalGrowth,
+        isIlliquid: isIlliquid || undefined,
         emoji,
       });
     } else {
@@ -92,6 +96,7 @@ const Savings: React.FC = () => {
         targetAmount: finalTarget,
         isInvestment,
         growthRate: finalGrowth,
+        isIlliquid: isIlliquid || undefined,
         color: SAVING_COLOR,
         emoji,
       });
@@ -168,7 +173,7 @@ const Savings: React.FC = () => {
                   <div>
                     <h4 className="font-bold text-slate-800 dark:text-slate-100">{s.name}</h4>
                     <p className="text-[10px] text-slate-400 dark:text-slate-500 font-bold uppercase tracking-widest">
-                      {s.isInvestment ? 'Inversión' : 'Ahorro Manual'}
+                      {s.isInvestment ? 'Inversión' : 'Ahorro Manual'}{s.isIlliquid ? ' · No disponible' : ''}
                     </p>
                   </div>
                 </div>
@@ -398,6 +403,19 @@ const Savings: React.FC = () => {
                 </div>
                 <div className={`w-6 h-6 rounded-full border-2 transition-all flex items-center justify-center ${isInvestment ? 'border-indigo-600 bg-indigo-600' : 'border-slate-300 dark:border-slate-600'}`}>
                   {isInvestment && <div className="w-2 h-2 bg-white rounded-full"></div>}
+                </div>
+              </div>
+
+              <div className="flex items-center gap-3 p-4 bg-slate-50 dark:bg-slate-800 rounded-2xl border border-slate-100 dark:border-slate-700 cursor-pointer hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors" onClick={() => setIsIlliquid(!isIlliquid)}>
+                <div className={`w-10 h-10 rounded-xl flex items-center justify-center transition-all ${isIlliquid ? 'bg-slate-700 text-white' : 'bg-white dark:bg-slate-700 text-slate-400 shadow-sm'}`}>
+                  <Lock size={20} />
+                </div>
+                <div className="flex-1">
+                  <p className="text-sm font-bold text-slate-700 dark:text-slate-200">¿Es un bien, no dinero?</p>
+                  <p className="text-[10px] text-slate-400 font-medium">Plaza de garaje, piso... Cuenta en tu patrimonio pero no en el ahorro disponible.</p>
+                </div>
+                <div className={`w-6 h-6 rounded-full border-2 transition-all flex items-center justify-center ${isIlliquid ? 'border-slate-700 bg-slate-700' : 'border-slate-300 dark:border-slate-600'}`}>
+                  {isIlliquid && <div className="w-2 h-2 bg-white rounded-full"></div>}
                 </div>
               </div>
 

@@ -43,7 +43,7 @@ export function buildAdvisorContext(input: AdvisorContextInput): string {
   const huchas = input.savings.map(s => {
     const amount = input.savingBalance(s.id, currentDate);
     const target = s.targetAmount ? ` de ${money(s.targetAmount)}${pct(amount, s.targetAmount)}` : '';
-    return `- ${s.name}: ${money(amount)}${target}${s.isInvestment ? ' [inversión]' : ''}`;
+    return `- ${s.name}: ${money(amount)}${target}${s.isInvestment ? ' [inversión]' : ''}${s.isIlliquid ? ' [bien no disponible, no es dinero]' : ''}`;
   });
 
   // Gasto real por categoria, calculado desde las transacciones del periodo.

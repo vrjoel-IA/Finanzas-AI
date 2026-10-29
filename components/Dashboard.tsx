@@ -194,6 +194,8 @@ const Dashboard: React.FC = () => {
 
     const liquidity = pastLiquidBalance + monthResult;
     const totalSavingsAccumulated = savings.reduce((sum, s) => sum + getSavingHistoricalBalance(s.id, currentDate), 0);
+    // Bienes (plaza de garaje, piso): patrimonio, pero no dinero disponible.
+    const illiquidAssets = savings.reduce((sum, s) => sum + (s.isIlliquid ? getSavingHistoricalBalance(s.id, currentDate) : 0), 0);
     const netWorth = liquidity + totalSavingsAccumulated;
 
     return {
@@ -205,6 +207,7 @@ const Dashboard: React.FC = () => {
       pastLiquidBalance,
       liquidity,
       totalSavingsAccumulated,
+      illiquidAssets,
       netWorth,
       refundRecoveries,
       totalInflow
@@ -488,7 +491,7 @@ const Dashboard: React.FC = () => {
             {/* h-full + justify-between: ocupa el alto de la fila en vez de dejar un hueco bajo la tarjeta. */}
             <div className="relative z-10 flex flex-col h-full justify-between">
               <div className="flex flex-col sm:flex-row justify-between items-start gap-4 mb-10">
-                <div><p className="text-blue-100 text-[9px] font-black uppercase tracking-[0.2em] mb-2 opacity-80">Patrimonio Neto en {currentDate}</p><h2 className="text-4xl md:text-5xl font-black tracking-tight">{metrics.netWorth.toLocaleString()}€</h2></div>
+                <div><p className="text-blue-100 text-[9px] font-black uppercase tracking-[0.2em] mb-2 opacity-80">Patrimonio Neto en {currentDate}</p><h2 className="text-4xl md:text-5xl font-black tracking-tight">{metrics.netWorth.toLocaleString()}€</h2>{metrics.illiquidAssets !== 0 && (<p className="text-[11px] font-bold text-blue-100 mt-2 opacity-90">Dinero disponible: {(metrics.netWorth - metrics.illiquidAssets).toLocaleString()}€ · Bienes: {metrics.illiquidAssets.toLocaleString()}€</p>)}</div>
                 <button onClick={() => setShowBreakdown(!showBreakdown)} className="px-5 py-3 rounded-2xl flex items-center gap-2 text-xs font-black transition-all shadow-lg bg-white/20 backdrop-blur-md hover:bg-white/30 active:scale-95">{metrics.monthResult >= 0 ? <TrendingUp size={16} /> : <TrendingDown size={16} />}{metrics.monthResult >= 0 ? '+' : ''}{metrics.monthResult.toLocaleString()}€ este mes<ChevronDown size={14} className={`transition-transform duration-300 ${showBreakdown ? 'rotate-180' : ''}`} /></button>
               </div>
               {showBreakdown && (
@@ -603,7 +606,7 @@ const Dashboard: React.FC = () => {
               <div className="w-10 h-10 bg-amber-50 dark:bg-amber-900/40 text-amber-600 dark:text-amber-400 rounded-xl flex items-center justify-center transition-colors"><PiggyBank size={20} /></div>
               <h3 onClick={() => navigate('/savings')} className="font-bold text-slate-800 dark:text-slate-100 cursor-pointer hover:text-blue-600 dark:hover:text-blue-400 hover:underline underline-offset-4 decoration-2 transition-all">Ahorro en {currentDate}</h3>
             </div>
-            <div className="text-center py-6"><p className="text-4xl font-black text-slate-900 dark:text-white">{metrics.totalSavingsAccumulated.toLocaleString()}€</p><p className="text-xs text-slate-400 dark:text-slate-500 font-bold uppercase tracking-widest mt-2">Capital acumulado histórico</p></div>
+            <div className="text-center py-6"><p className="text-4xl font-black text-slate-900 dark:text-white">{metrics.totalSavingsAccumulated.toLocaleString()}€</p><p className="text-xs text-slate-400 dark:text-slate-500 font-bold uppercase tracking-widest mt-2">Capital acumulado histórico</p>{metrics.illiquidAssets !== 0 && (<p className="text-xs font-bold text-slate-500 dark:text-slate-400 mt-2">Disponible: {(metrics.totalSavingsAccumulated - metrics.illiquidAssets).toLocaleString()}€ · Bienes: {metrics.illiquidAssets.toLocaleString()}€</p>)}</div>
             <div className="grid grid-cols-2 gap-2 mt-4">{savings.slice(0, 4).map(s => (<div key={s.id} className="p-3 bg-slate-50 dark:bg-slate-800/50 rounded-xl border border-slate-100 dark:border-slate-800 transition-colors"><p className="text-[10px] text-slate-400 dark:text-slate-500 font-bold truncate uppercase tracking-tighter">{s.name}</p><p className="text-xs font-black text-slate-700 dark:text-slate-200">{getSavingHistoricalBalance(s.id, currentDate).toLocaleString()}€</p></div>))}</div>
           </div>
         );
